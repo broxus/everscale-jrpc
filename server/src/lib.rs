@@ -54,6 +54,7 @@ use axum_jrpc::JsonRpcResponse;
 use everscale_jrpc_models::*;
 
 pub use self::state::JrpcState;
+pub use everscale_jrpc_models as models;
 
 mod state;
 
@@ -128,10 +129,10 @@ async fn jrpc_router(
     Ok(answer)
 }
 
-pub type QueryResult<T> = Result<T, QueryError>;
+type QueryResult<T> = Result<T, QueryError>;
 
 #[derive(thiserror::Error, Clone, Debug)]
-pub enum QueryError {
+enum QueryError {
     #[error("Connection error")]
     ConnectionError,
     #[error("Failed to serialize message")]

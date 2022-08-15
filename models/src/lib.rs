@@ -27,15 +27,12 @@ pub struct BlockResponse {
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum ContractStateResponse {
     NotExists,
-    Exists(ExistingContract),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExistingContract {
-    /// Base64 encoded account data
-    #[serde(with = "serde_account_stuff")]
-    pub account: ton_block::AccountStuff,
-    pub timings: nekoton_abi::GenTimings,
-    pub last_transaction_id: nekoton_abi::LastTransactionId,
+    #[serde(rename_all = "camelCase")]
+    Exists {
+        /// Base64 encoded account data
+        #[serde(with = "serde_account_stuff")]
+        account: ton_block::AccountStuff,
+        timings: nekoton_abi::GenTimings,
+        last_transaction_id: nekoton_abi::LastTransactionId,
+    },
 }

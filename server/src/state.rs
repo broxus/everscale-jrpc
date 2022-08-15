@@ -168,11 +168,11 @@ impl JrpcState {
             ton_block::Account::Account(account) => account,
         };
 
-        let response = serde_json::to_value(ContractStateResponse::Exists(ExistingContract {
+        let response = serde_json::to_value(ContractStateResponse::Exists {
             account,
             timings: nekoton_abi::GenTimings::Unknown, // TODO: update shard timings while updating cache
             last_transaction_id: state.last_transaction_id,
-        }))
+        })
         .map_err(|e| {
             log::error!("Failed to serialize shard account: {e:?}");
             QueryError::FailedToSerialize
