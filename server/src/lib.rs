@@ -10,6 +10,15 @@
 //!     jrpc_state: Arc<JrpcState>,
 //! }
 //!
+//! impl ton_indexer::Subscriber for ExampleSubscriber {
+//!     async fn process_block(&self, ctx: ton_indexer::ProcessBlockContext<'_>) -> Result<()> {
+//!         if let Some(shard_state) = ctx.shard_state_stuff() {
+//!             self.jrpc_state.handle_block(ctx.block_stuff(), shard_state)?;
+//!         }
+//!         Ok(())
+//!     }
+//! }
+//!
 //! async fn test(
 //!     config: ton_indexer::NodeConfig,
 //!     global_config: ton_indexer::GlobalConfig,
