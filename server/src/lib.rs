@@ -53,7 +53,8 @@ use axum_jrpc::error::{JsonRpcError, JsonRpcErrorReason};
 use axum_jrpc::JsonRpcResponse;
 use everscale_jrpc_models::*;
 
-pub use self::state::JrpcState;
+use self::state::Counters;
+pub use self::state::{JrpcMetrics, JrpcState};
 pub use everscale_jrpc_models as models;
 
 mod state;
@@ -102,31 +103,42 @@ async fn jrpc_router(
     Extension(ctx): Extension<Arc<JrpcState>>,
     req: axum_jrpc::JsonRpcExtractor,
 ) -> axum_jrpc::JrpcResult {
+    let counters = ctx.counters();
+    counters.increase_total();
+
     let answer_id = req.get_answer_id();
     let method = req.method();
     let answer = match method {
         "getLatestKeyBlock" => match ctx.get_last_key_block() {
             Ok(b) => JsonRpcResponse::success(answer_id, b.as_ref()),
-            Err(e) => JsonRpcResponse::error(answer_id, e.into()),
+            Err(e) => make_error(answer_id, e, counters),
         },
         "getContractState" => {
             let request: GetContractStateRequest = req.parse_params()?;
             match ctx.get_contract_state(&request.address) {
                 Ok(state) => JsonRpcResponse::success(answer_id, state),
-                Err(e) => JsonRpcResponse::error(answer_id, e.into()),
+                Err(e) => make_error(answer_id, e, counters),
             }
         }
         "sendMessage" => {
             let request: SendMessageRequest = req.parse_params()?;
             match ctx.send_message(request.message).await {
                 Ok(_) => JsonRpcResponse::success(answer_id, ()),
-                Err(e) => JsonRpcResponse::error(answer_id, e.into()),
+                Err(e) => make_error(answer_id, e, counters),
             }
         }
-        m => req.method_not_found(m),
+        m => {
+            counters.increase_not_found();
+            req.method_not_found(m)
+        }
     };
 
     Ok(answer)
+}
+
+fn make_error(answer_id: i64, error: QueryError, counters: &Counters) -> JsonRpcResponse {
+    counters.increase_errors();
+    JsonRpcResponse::error(answer_id, error.into())
 }
 
 type QueryResult<T> = Result<T, QueryError>;
@@ -139,14 +151,10 @@ enum QueryError {
     FailedToSerialize,
     #[error("Invalid account state")]
     InvalidAccountState,
-    #[error("Invalid block")]
-    InvalidBlock,
-    #[error("Unknown")]
-    Unknown,
-    #[error("Not ready")]
-    NotReady,
     #[error("External message expected")]
     ExternalMessageExpected,
+    #[error("Not ready")]
+    NotReady,
 }
 
 impl QueryError {
@@ -155,10 +163,8 @@ impl QueryError {
             QueryError::ConnectionError => -32001,
             QueryError::FailedToSerialize => -32002,
             QueryError::InvalidAccountState => -32004,
-            QueryError::InvalidBlock => -32006,
-            QueryError::NotReady => -32007,
-            QueryError::Unknown => -32603,
             QueryError::ExternalMessageExpected => -32005,
+            QueryError::NotReady => -32007,
         }
     }
 }

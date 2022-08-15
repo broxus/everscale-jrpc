@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 
 use anyhow::Result;
@@ -16,9 +17,14 @@ pub struct JrpcState {
     key_block_response: ArcSwapOption<serde_json::Value>,
     masterchain_accounts_cache: RwLock<Option<ShardAccounts>>,
     shard_accounts_cache: RwLock<FxHashMap<ton_block::ShardIdent, ShardAccounts>>,
+    counters: Counters,
 }
 
 impl JrpcState {
+    pub fn metrics(&self) -> JrpcMetrics {
+        self.counters.metrics()
+    }
+
     pub fn handle_block(
         &self,
         block_stuff: &BlockStuff,
@@ -107,6 +113,10 @@ impl JrpcState {
             .compare_and_swap(&None::<Arc<_>>, Some(Arc::new(key_block_response)));
 
         Ok(())
+    }
+
+    pub(crate) fn counters(&self) -> &Counters {
+        &self.counters
     }
 
     pub(crate) fn get_last_key_block(&self) -> QueryResult<Arc<serde_json::Value>> {
@@ -215,6 +225,45 @@ impl JrpcState {
             }
         }
     }
+}
+
+#[derive(Default)]
+pub struct Counters {
+    total: AtomicU64,
+    not_found: AtomicU64,
+    errors: AtomicU64,
+}
+
+impl Counters {
+    pub fn increase_total(&self) {
+        self.total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn increase_not_found(&self) {
+        self.not_found.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn increase_errors(&self) {
+        self.errors.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn metrics(&self) -> JrpcMetrics {
+        JrpcMetrics {
+            total: self.total.load(Ordering::Relaxed),
+            not_found: self.not_found.load(Ordering::Relaxed),
+            errors: self.errors.load(Ordering::Relaxed),
+        }
+    }
+}
+
+#[derive(Default, Copy, Clone)]
+pub struct JrpcMetrics {
+    /// Total amount JRPC requests
+    pub total: u64,
+    /// Number of requests resolved with an error
+    pub not_found: u64,
+    /// Number of requests with unknown method
+    pub errors: u64,
 }
 
 pub(crate) struct ShardAccount {
