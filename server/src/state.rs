@@ -27,6 +27,7 @@ impl JrpcState {
         let block_info = &block_stuff.block().read_info()?;
         self.update(
             block_stuff.id(),
+            block_stuff.block(),
             block_info,
             shard_state.state().read_accounts()?,
             shard_state.ref_mc_state_handle().clone(),
@@ -36,6 +37,7 @@ impl JrpcState {
     pub fn update(
         &self,
         block_id: &ton_block::BlockIdExt,
+        block: &ton_block::Block,
         block_info: &ton_block::BlockInfo,
         accounts: ton_block::ShardAccounts,
         state_handle: Arc<RefMcStateHandle>,
@@ -88,14 +90,23 @@ impl JrpcState {
             }
         };
 
+        if block_info.key_block() {
+            self.update_key_block(block);
+        }
+
         Ok(())
     }
 
-    pub(crate) fn is_initialized(&self) -> bool {
-        self.engine.upgrade().is_some()
-            && self.key_block_response.load().is_some()
-            && self.masterchain_accounts_cache.read().is_some()
-            && !self.shard_accounts_cache.read().is_empty()
+    pub(crate) async fn initialize(&self, engine: &Arc<ton_indexer::Engine>) -> Result<()> {
+        let last_key_block = engine.load_last_key_block().await?;
+        let key_block_response = serde_json::to_value(BlockResponse {
+            block: last_key_block.block().clone(),
+        })?;
+
+        self.key_block_response
+            .compare_and_swap(&None::<Arc<_>>, Some(Arc::new(key_block_response)));
+
+        Ok(())
     }
 
     pub(crate) fn get_last_key_block(&self) -> QueryResult<Arc<serde_json::Value>> {
@@ -119,12 +130,21 @@ impl JrpcState {
             } else {
                 let cache = self.shard_accounts_cache.read();
                 let mut state = Ok(None);
+
+                let mut has_account_shard = false;
                 for (shard_ident, shard_accounts) in cache.iter() {
                     if !contains_account(shard_ident, &account) {
                         continue;
                     }
+
+                    has_account_shard = true;
                     state = shard_accounts.get(&account)
                 }
+
+                if !has_account_shard {
+                    return Err(QueryError::NotReady);
+                }
+
                 state
             }
         };
@@ -183,6 +203,17 @@ impl JrpcState {
         engine
             .broadcast_external_message(to, &serialized)
             .map_err(|_| QueryError::ConnectionError)
+    }
+
+    fn update_key_block(&self, block: &ton_block::Block) {
+        match serde_json::to_value(BlockResponse {
+            block: block.clone(),
+        }) {
+            Ok(response) => self.key_block_response.store(Some(Arc::new(response))),
+            Err(e) => {
+                log::error!("Failed to update key block: {e:?}");
+            }
+        }
     }
 }
 

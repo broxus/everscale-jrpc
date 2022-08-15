@@ -1,3 +1,39 @@
+//! # Example
+//!
+//! ```rust
+//! use std::sync::Arc;
+//!
+//! use anyhow::Result;
+//! use everscale_jrpc_server::*;
+//!
+//! struct ExampleSubscriber {
+//!     jrpc_state: Arc<JrpcState>,
+//! }
+//!
+//! async fn test(
+//!     config: ton_indexer::NodeConfig,
+//!     global_config: ton_indexer::GlobalConfig,
+//!     listen_address: std::net::SocketAddr,
+//! ) -> Result<()> {
+//!     let jrpc_state = Arc::new(JrpcState::default());
+//!     let subscriber: Arc<dyn ton_indexer::Subscriber> = Arc::new(ExampleSubscriber {
+//!         jrpc_state: jrpc_state.clone(),
+//!     });
+//!
+//!     let engine = ton_indexer::Engine::new(config, global_config, vec![subscriber]).await?;
+//!
+//!     engine.start().await?;
+//!
+//!     let jrpc = JrpcServer::with_state(jrpc_state).build(&engine, listen_address).await?;
+//!     tokio::spawn(jrpc);
+//!
+//!     // ...
+//!
+//!     Ok(())
+//! }
+//! ```
+
+use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -12,14 +48,17 @@ pub use self::state::JrpcState;
 
 mod state;
 
-pub struct JrpcBuilder {
+pub struct JrpcServer {
     route: String,
-    allow_partial_state: bool,
+    state: Arc<JrpcState>,
 }
 
-impl JrpcBuilder {
-    pub fn new() -> Self {
-        Self::default()
+impl JrpcServer {
+    pub fn with_state(state: Arc<JrpcState>) -> Self {
+        Self {
+            route: "/rpc".to_string(),
+            state,
+        }
     }
 
     pub fn with_route(mut self, route: &str) -> Self {
@@ -27,47 +66,13 @@ impl JrpcBuilder {
         self
     }
 
-    /// Allow running JRPC with partially initialized state
-    pub fn allow_partial_state(mut self) -> Self {
-        self.allow_partial_state = true;
-        self
-    }
-
-    pub fn build(self) -> (Arc<JrpcState>, Server) {
-        let state = Arc::new(JrpcState::default());
-        let server = Server {
-            route: self.route,
-            allow_partial_state: self.allow_partial_state,
-            state: state.clone(),
-        };
-        (state, server)
-    }
-}
-
-impl Default for JrpcBuilder {
-    fn default() -> Self {
-        Self {
-            route: "/rpc".to_owned(),
-            allow_partial_state: false,
-        }
-    }
-}
-
-pub struct Server {
-    route: String,
-    allow_partial_state: bool,
-    state: Arc<JrpcState>,
-}
-
-impl Server {
-    pub async fn serve(self, listen_address: SocketAddr) -> Result<()> {
-        if !self.state.is_initialized() {
-            if self.allow_partial_state {
-                log::warn!("Starting JRPC server with partially initialized state");
-            } else {
-                anyhow::bail!("Partially initialized state");
-            }
-        }
+    /// Initializes state and returns server future
+    pub async fn build(
+        self,
+        engine: &Arc<ton_indexer::Engine>,
+        listen_address: SocketAddr,
+    ) -> Result<impl Future<Output = ()> + Send + 'static> {
+        self.state.initialize(engine).await?;
 
         let service = tower::ServiceBuilder::new().layer(Extension(self.state));
         #[cfg(feature = "compression")]
@@ -77,11 +82,9 @@ impl Server {
             .route(&self.route, post(jrpc_router))
             .layer(service);
 
-        axum::Server::bind(&listen_address)
-            .serve(router.into_make_service())
-            .await?;
+        let future = axum::Server::try_bind(&listen_address)?.serve(router.into_make_service());
 
-        Ok(())
+        Ok(async move { future.await.unwrap() })
     }
 }
 
