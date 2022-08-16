@@ -8,8 +8,9 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use everscale_jrpc_models::{ContractStateResponse, ExistingContract};
+use everscale_jrpc_models::ContractStateResponse;
 use futures::StreamExt;
+use nekoton::transport::models::ExistingContract;
 use nekoton_utils::SimpleClock;
 use parking_lot::RwLock;
 use reqwest::Url;
@@ -114,7 +115,15 @@ impl LoadBalancedRpc {
         let parsed: ContractStateResponse = response.unwrap()?;
         let response = match parsed {
             ContractStateResponse::NotExists => None,
-            ContractStateResponse::Exists(c) => Some(c),
+            ContractStateResponse::Exists {
+                account,
+                timings,
+                last_transaction_id,
+            } => Some(ExistingContract {
+                account,
+                timings,
+                last_transaction_id,
+            }),
         };
         Ok(response)
     }

@@ -1,6 +1,5 @@
 use nekoton_utils::*;
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetContractStateRequest {
@@ -36,25 +35,4 @@ pub enum ContractStateResponse {
         timings: nekoton_abi::GenTimings,
         last_transaction_id: nekoton_abi::LastTransactionId,
     },
-}
-
-impl PartialEq<Self> for ExistingContract {
-    fn eq(&self, other: &Self) -> bool {
-        self.partial_cmp(other) == Some(Ordering::Equal)
-    }
-}
-
-impl PartialOrd for ExistingContract {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        match (self.timings, other.timings) {
-            (
-                nekoton_abi::GenTimings::Known { gen_lt, .. },
-                nekoton_abi::GenTimings::Known {
-                    gen_lt: other_gen_lt,
-                    ..
-                },
-            ) => gen_lt.partial_cmp(&other_gen_lt),
-            _ => None,
-        }
-    }
 }

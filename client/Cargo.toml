@@ -1,5 +1,5 @@
 [package]
-name = "ever_jrpc_client"
+name = "everscale-jrpc-client"
 edition = "2021"
 version = "0.1.0"
 
@@ -9,6 +9,7 @@ everscale-jrpc-models = { path = "../models" }
 futures = "0.3.23"
 log = "0.4.17"
 
+nekoton = { git = "https://github.com/broxus/nekoton.git", default-features = false }
 nekoton-abi = { git = "https://github.com/broxus/nekoton.git", default-features = false }
 nekoton-utils = { git = "https://github.com/broxus/nekoton.git", default-features = false }
 
