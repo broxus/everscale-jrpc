@@ -182,7 +182,13 @@ impl LoadBalancedRpc {
             .await
             .context("Failed to get dst state")?;
 
+        log::debug!(
+            "Initial state. Contract exists: {}",
+            initial_state.is_some()
+        );
         self.send_message(message).await?;
+        log::debug!("Message sent");
+
         let start = std::time::Instant::now();
         loop {
             tokio::time::sleep(options.poll_interval).await;
@@ -204,6 +210,7 @@ impl LoadBalancedRpc {
             if start.elapsed() > options.ttl {
                 return Ok(SendStatus::Expired);
             }
+            log::debug!("Message not confirmed yet");
         }
     }
 }
@@ -225,6 +232,7 @@ pub enum TransportErrorAction {
     Return,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SendStatus {
     Confirmed,
     Expired,
