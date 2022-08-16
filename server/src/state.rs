@@ -43,6 +43,7 @@ impl JrpcState {
         let shard_accounts = ShardAccounts {
             accounts,
             state_handle,
+            gen_utime: block_info.gen_utime().0,
         };
 
         if block_id.shard_id.is_masterchain() {
@@ -150,7 +151,10 @@ impl JrpcState {
 
         let response = serde_json::to_value(ContractStateResponse::Exists(ExistingContract {
             account,
-            timings: nekoton_abi::GenTimings::Unknown, // TODO: update shard timings while updating cache
+            timings: nekoton_abi::GenTimings::Known {
+                gen_lt: state.last_transaction_id.lt(),
+                gen_utime: state.gen_utime,
+            },
             last_transaction_id: state.last_transaction_id,
         }))
         .map_err(|e| {
@@ -190,11 +194,13 @@ pub(crate) struct ShardAccount {
     pub data: ton_types::Cell,
     pub last_transaction_id: nekoton_abi::LastTransactionId,
     pub state_handle: Arc<RefMcStateHandle>,
+    pub gen_utime: u32,
 }
 
 struct ShardAccounts {
     accounts: ton_block::ShardAccounts,
     state_handle: Arc<RefMcStateHandle>,
+    gen_utime: u32,
 }
 
 impl ShardAccounts {
@@ -209,6 +215,7 @@ impl ShardAccounts {
                     },
                 ),
                 state_handle: self.state_handle.clone(),
+                gen_utime: self.gen_utime,
             })),
             None => Ok(None),
         }
