@@ -5,14 +5,9 @@ version = "0.1.0"
 
 [dependencies]
 anyhow = "1"
-everscale-jrpc-models = { path = "../models" }
+thiserror = "1.0"
 futures = "0.3.23"
 log = "0.4.17"
-
-nekoton = { git = "https://github.com/broxus/nekoton.git", default-features = false }
-nekoton-abi = { git = "https://github.com/broxus/nekoton.git", default-features = false }
-nekoton-utils = { git = "https://github.com/broxus/nekoton.git", default-features = false }
-
 parking_lot = "0.12.0"
 rand = "0.8.5"
 reqwest = { version = ">=0.11.10", features = ["gzip", "json"] }
@@ -22,6 +17,10 @@ tokio = { version = "1.20.1", features = ["full"] }
 
 ton_abi = { git = "https://github.com/broxus/ton-labs-abi" }
 ton_block = { git = "https://github.com/broxus/ton-labs-block" }
+
+nekoton = { git = "https://github.com/broxus/nekoton.git", default-features = false }
+
+everscale-jrpc-models = { path = "../models" }
 
 [dev-dependencies]
 env_logger = "0.9.0"

@@ -1,12 +1,12 @@
+use std::str::FromStr;
+use std::time::Duration;
+
 use ed25519_dalek::Signer;
-use everscale_jrpc_client::{LoadBalancedRpcOptions, SendOptions, TransportErrorAction};
+use everscale_jrpc_client::{JrpcClientOptions, SendOptions, TransportErrorAction};
 use nekoton::core::models::Expiration;
 use nekoton::core::ton_wallet::multisig::prepare_transfer;
 use nekoton::core::ton_wallet::{Gift, MultisigType, TransferAction, WalletType};
 use nekoton::crypto::MnemonicType;
-use nekoton_utils::SimpleClock;
-use std::str::FromStr;
-use std::time::Duration;
 use ton_block::MsgAddressInt;
 
 #[tokio::main]
@@ -19,10 +19,10 @@ async fn main() {
 
     let to = MsgAddressInt::from_str(&to).expect("invalid address");
 
-    let client = everscale_jrpc_client::LoadBalancedRpc::new(
-        ["https://extension-api.broxus.com/rpc".parse().unwrap()],
-        LoadBalancedRpcOptions {
-            prove_interval: Duration::from_secs(10),
+    let client = everscale_jrpc_client::JrpcClient::new(
+        ["https://jrpc.everwallet.net/rpc".parse().unwrap()],
+        JrpcClientOptions {
+            probe_interval: Duration::from_secs(10),
         },
     )
     .await
@@ -37,7 +37,7 @@ async fn main() {
     );
 
     let tx = prepare_transfer(
-        &SimpleClock,
+        &nekoton::utils::SimpleClock,
         &signer.public,
         false,
         from,
@@ -72,7 +72,7 @@ async fn main() {
     };
 
     let status = client
-        .send_with_confirmation(message, send_options)
+        .send_message(message, send_options)
         .await
         .expect("failed to send message");
     println!("status: {:?}", status);

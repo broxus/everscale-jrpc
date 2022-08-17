@@ -8,6 +8,13 @@ pub struct GetContractStateRequest {
     pub address: ton_block::MsgAddressInt,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct GetContractStateRequestRef<'a> {
+    /// Address as string
+    #[serde(with = "serde_address")]
+    pub address: &'a ton_block::MsgAddressInt,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SendMessageRequest {
     /// Base64 encoded message

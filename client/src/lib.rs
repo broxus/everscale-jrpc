@@ -1,45 +1,35 @@
 #![deny(clippy::dbg_macro)]
 use std::cmp::Ordering;
-use std::{
-    collections::HashSet,
-    fmt::{Debug, Formatter},
-    sync::Arc,
-    time::Duration,
-};
+use std::collections::HashSet;
+use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
-use everscale_jrpc_models::ContractStateResponse;
+use everscale_jrpc_models::*;
 use futures::StreamExt;
 use nekoton::transport::models::ExistingContract;
-use nekoton_utils::SimpleClock;
 use parking_lot::RwLock;
 use reqwest::Url;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
 use ton_block::{Message, MsgAddressInt};
 
-#[derive(Debug, Clone)]
-pub struct LoadBalancedRpc {
-    state: Arc<RpcState>,
+#[derive(Clone)]
+pub struct JrpcClient {
+    state: Arc<State>,
 }
 
-pub struct LoadBalancedRpcOptions {
-    /// How often the probe should update health statuses.
-    pub prove_interval: Duration,
-}
-
-impl LoadBalancedRpc {
+impl JrpcClient {
     /// [endpoints] full URLs of the RPC endpoints.
     pub async fn new<I: IntoIterator<Item = Url>>(
         endpoints: I,
-        options: LoadBalancedRpcOptions,
+        options: JrpcClientOptions,
     ) -> Result<Self> {
         let client = reqwest::ClientBuilder::new().gzip(true).build()?;
         let client = Self {
-            state: Arc::new(RpcState {
+            state: Arc::new(State {
                 endpoints: endpoints
                     .into_iter()
-                    .map(|e| RpcClientInner::with_client(e.to_string(), client.clone()))
+                    .map(|e| JrpcConnection::new(e.to_string(), client.clone()))
                     .collect(),
                 live_endpoints: Default::default(),
             }),
@@ -50,7 +40,7 @@ impl LoadBalancedRpc {
 
         tokio::spawn(async move {
             loop {
-                tokio::time::sleep(options.prove_interval).await;
+                tokio::time::sleep(options.probe_interval).await;
                 state.update_endpoints().await;
             }
         });
@@ -58,85 +48,35 @@ impl LoadBalancedRpc {
         Ok(client)
     }
 
-    pub async fn request<T: Serialize>(&self, req: JrpcRequest<'_, T>) -> JsonRpcRepsonse {
-        let client = match self.state.get_client() {
-            Some(client) => client,
-            None => {
-                return JsonRpcRepsonse {
-                    jsonrpc: "2.0".to_string(),
-                    result: JsonRpcAnswer::Error(JsonRpcError {
-                        code: -32603,
-                        message: "No endpoint available".to_string(),
-                    }),
-                    id: req.id,
-                }
-            }
-        };
-
-        let id = req.id;
-        match client.request(req).await {
-            Ok(a) => a,
-            Err(e) => {
-                log::error!("Error while sending request to endpoint: {e:?}");
-                self.state.remove_endpoint(&client.endpoint);
-
-                JsonRpcRepsonse {
-                    jsonrpc: "2.0".to_string(),
-                    result: JsonRpcAnswer::Error(JsonRpcError {
-                        code: -32603,
-                        message: "Internal error".to_string(),
-                    }),
-                    id,
-                }
-            }
-        }
-    }
-
     pub async fn get_contract_state(
         &self,
-        contract_address: &MsgAddressInt,
+        address: &MsgAddressInt,
     ) -> Result<Option<ExistingContract>> {
-        #[derive(Serialize)]
-        struct Request {
-            address: String,
-        }
-
-        let req = Request {
-            address: contract_address.to_string(),
-        };
-
-        let req = JrpcRequest {
-            id: 13,
-            method: "getContractState",
-            params: req,
-        };
-
-        let response = self.request(req).await;
-        let parsed: ContractStateResponse = response.unwrap()?;
-        let response = match parsed {
-            ContractStateResponse::NotExists => None,
+        let req = GetContractStateRequestRef { address };
+        match self.request("getContractState", req).await? {
+            ContractStateResponse::NotExists => Ok(None),
             ContractStateResponse::Exists {
                 account,
                 timings,
                 last_transaction_id,
-            } => Some(ExistingContract {
+            } => Ok(Some(ExistingContract {
                 account,
                 timings,
                 last_transaction_id,
-            }),
-        };
-        Ok(response)
+            })),
+        }
     }
 
     pub async fn run_local(
         &self,
-        contract_address: &MsgAddressInt,
+        address: &MsgAddressInt,
         function: &ton_abi::Function,
         input: &[ton_abi::Token],
-    ) -> Result<Option<nekoton_abi::ExecutionOutput>> {
-        use nekoton_abi::FunctionExt;
+    ) -> Result<Option<nekoton::abi::ExecutionOutput>> {
+        use nekoton::abi::FunctionExt;
+        use nekoton::utils::SimpleClock;
 
-        let state = match self.get_contract_state(contract_address).await? {
+        let state = match self.get_contract_state(address).await? {
             Some(a) => a,
             None => return Ok(None),
         };
@@ -147,33 +87,17 @@ impl LoadBalancedRpc {
             .map(Some)
     }
 
-    pub async fn send_message(&self, message: Message) -> Result<()> {
+    pub async fn broadcast_message(&self, message: Message) -> Result<()> {
         anyhow::ensure!(
             message.is_inbound_external(),
             "Only inbound external messages are allowed"
         );
-        let req = everscale_jrpc_models::SendMessageRequest { message };
 
-        let response = self
-            .request(JrpcRequest {
-                id: 13,
-                method: "sendMessage",
-                params: req,
-            })
-            .await;
-        match response.result {
-            JsonRpcAnswer::Result(_) => Ok(()),
-            JsonRpcAnswer::Error(e) => {
-                anyhow::bail!("Error while sending message: {e:?}")
-            }
-        }
+        let req = SendMessageRequest { message };
+        self.request("sendMessage", req).await
     }
 
-    pub async fn send_with_confirmation(
-        &self,
-        message: Message,
-        options: SendOptions,
-    ) -> Result<SendStatus> {
+    pub async fn send_message(&self, message: Message, options: SendOptions) -> Result<SendStatus> {
         let dst = message
             .dst()
             .context("Only inbound external messages are allowed")?;
@@ -186,16 +110,18 @@ impl LoadBalancedRpc {
             "Initial state. Contract exists: {}",
             initial_state.is_some()
         );
-        self.send_message(message).await?;
-        log::debug!("Message sent");
+
+        self.broadcast_message(message).await?;
+        log::debug!("Message broadcasted");
 
         let start = std::time::Instant::now();
         loop {
             tokio::time::sleep(options.poll_interval).await;
+
             let state = self.get_contract_state(&dst).await;
             let state = match (options.error_action, state) {
                 (TransportErrorAction::Poll, Err(e)) => {
-                    log::error!("Error while polling for message: {e:?}. Continue polling",);
+                    log::error!("Error while polling for message: {e:?}. Continue polling");
                     continue;
                 }
                 (TransportErrorAction::Return, Err(e)) => {
@@ -213,18 +139,65 @@ impl LoadBalancedRpc {
             log::debug!("Message not confirmed yet");
         }
     }
+
+    async fn request<'a, T, D>(&self, method: &'a str, params: T) -> Result<D>
+    where
+        T: Serialize,
+        for<'de> D: Deserialize<'de>,
+    {
+        let client = match self.state.get_client() {
+            Some(client) => client,
+            None => return Err(JrpcClientError::NoEndpointsAvailable.into()),
+        };
+
+        client.request(method, params).await
+    }
 }
 
+pub struct JrpcClientOptions {
+    /// How often the probe should update health statuses.
+    ///
+    /// Default: `60 sec`
+    pub probe_interval: Duration,
+}
+
+impl Default for JrpcClientOptions {
+    fn default() -> Self {
+        Self {
+            probe_interval: Duration::from_secs(64),
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
 pub struct SendOptions {
     /// action to perform if an error occurs during waiting for message delivery.
+    ///
+    /// Default: [`TransportErrorAction::Return`]
     pub error_action: TransportErrorAction,
+
     /// time after which the message is considered as expired.
+    ///
+    /// Default: `60 sec`
     pub ttl: Duration,
+
     /// how often the message is checked for delivery.
+    ///
+    /// Default: `10 sec`
     pub poll_interval: Duration,
 }
 
-#[derive(Copy, Clone)]
+impl Default for SendOptions {
+    fn default() -> Self {
+        Self {
+            error_action: TransportErrorAction::Return,
+            ttl: Duration::from_secs(60),
+            poll_interval: Duration::from_secs(10),
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
 pub enum TransportErrorAction {
     /// Poll endlessly until message is delivered or expired
     Poll,
@@ -238,22 +211,13 @@ pub enum SendStatus {
     Expired,
 }
 
-struct RpcState {
-    endpoints: Vec<RpcClientInner>,
-    live_endpoints: RwLock<Vec<RpcClientInner>>,
+struct State {
+    endpoints: Vec<JrpcConnection>,
+    live_endpoints: RwLock<Vec<JrpcConnection>>,
 }
 
-impl Debug for RpcState {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RpcState")
-            .field("endpoints", &self.endpoints)
-            .field("live_endpoints", &self.live_endpoints)
-            .finish()
-    }
-}
-
-impl RpcState {
-    fn get_client(&self) -> Option<RpcClientInner> {
+impl State {
+    fn get_client(&self) -> Option<JrpcConnection> {
         use rand::prelude::SliceRandom;
 
         let live_endpoints = self.live_endpoints.read();
@@ -291,129 +255,99 @@ impl RpcState {
 
         *old_endpoints = new_endpoints;
     }
-
-    fn remove_endpoint(&self, endpoint: &str) {
-        self.live_endpoints
-            .write()
-            .retain(|c| c.endpoint.as_ref() != endpoint);
-
-        log::warn!("Removed endpoint {endpoint} from the list of endpoints");
-    }
 }
 
-#[derive(Clone, Debug)]
-struct RpcClientInner {
+#[derive(Clone)]
+struct JrpcConnection {
     endpoint: Arc<String>,
     client: reqwest::Client,
 }
 
-impl std::fmt::Display for RpcClientInner {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("RpcClientInner")
-            .field(&self.endpoint)
-            .finish()
-    }
-}
-
-impl RpcClientInner {
-    fn with_client(endpoint: String, client: reqwest::Client) -> Self {
-        log::info!("Created new RPC client for endpoint: {}", endpoint);
-        RpcClientInner {
+impl JrpcConnection {
+    fn new(endpoint: String, client: reqwest::Client) -> Self {
+        JrpcConnection {
             endpoint: Arc::new(endpoint),
             client,
         }
     }
 
-    async fn request<T: Serialize>(&self, request: JrpcRequest<'_, T>) -> Result<JsonRpcRepsonse> {
-        let req = self.client.post(self.endpoint.as_str()).json(&request);
+    async fn request<'a, T, D>(&self, method: &'a str, params: T) -> Result<D>
+    where
+        T: Serialize,
+        for<'de> D: Deserialize<'de>,
+    {
+        #[derive(Debug, Clone)]
+        struct JrpcRequest<'a, T> {
+            method: &'a str,
+            params: T,
+        }
+
+        impl<T: Serialize> Serialize for JrpcRequest<'_, T> {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::ser::Serializer,
+            {
+                use serde::ser::SerializeStruct;
+
+                let mut s = serializer.serialize_struct("JrpcRequest", 4)?;
+                s.serialize_field("jsonrpc", "2.0")?;
+                s.serialize_field("id", &0)?;
+                s.serialize_field("method", self.method)?;
+                s.serialize_field("params", &self.params)?;
+                s.end()
+            }
+        }
+
+        let req = self
+            .client
+            .post(self.endpoint.as_str())
+            .json(&JrpcRequest { method, params });
+
+        #[derive(Debug, Deserialize)]
+        struct JsonRpcResponse<T> {
+            result: JsonRpcAnswer<T>,
+        }
+
+        #[derive(Debug, Deserialize)]
+        #[serde(untagged)]
+        enum JsonRpcAnswer<T> {
+            Result(T),
+            Error(JsonRpcError),
+        }
+
+        #[derive(Debug, Deserialize)]
+        struct JsonRpcError {
+            code: i32,
+            message: String,
+        }
+
         // let res = req.send().await?.json::<JsonRpcRepsonse>().await?;
         // Ok(res)
-        let res = req.send().await?.text().await?;
-        Ok(serde_json::from_str(&res)?)
-    }
-
-    async fn is_alive(&self) -> bool {
-        match self
-            .request(JrpcRequest {
-                id: 1337,
-                method: "getLatestKeyBlock",
-                params: (),
-            })
-            .await
-        {
-            Ok(res) => matches!(res.result, JsonRpcAnswer::Result(_)),
-            Err(e) => {
-                log::error!("{} seems to be dead: {e:?}", self.endpoint);
-                false
+        let JsonRpcResponse { result } = req.send().await?.json().await?;
+        match result {
+            JsonRpcAnswer::Result(result) => Ok(result),
+            JsonRpcAnswer::Error(e) => {
+                Err(JrpcClientError::ErrorResponse(e.code, e.message).into())
             }
         }
     }
-}
 
-#[derive(Debug, Clone)]
-pub struct JrpcRequest<'a, T> {
-    pub id: i64,
-    pub method: &'a str,
-    pub params: T,
-}
+    async fn is_alive(&self) -> bool {
+        #[derive(Deserialize)]
+        struct AnyResponse {}
 
-impl<T: Serialize> Serialize for JrpcRequest<'_, T> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::ser::Serializer,
-    {
-        use serde::ser::SerializeStruct;
-
-        let mut s = serializer.serialize_struct("JrpcRequest", 4)?;
-        s.serialize_field("jsonrpc", "2.0")?;
-        s.serialize_field("id", &self.id)?;
-        s.serialize_field("method", self.method)?;
-        s.serialize_field("params", &self.params)?;
-        s.end()
+        self.request::<_, AnyResponse>("getLatestKeyBlock", ())
+            .await
+            .is_ok()
     }
 }
 
-#[derive(Serialize)]
-struct Jrpc<T> {
-    jsonrpc: &'static str,
-    id: i32,
-    method: &'static str,
-    params: T,
-}
-
-#[derive(Serialize, Debug, Deserialize)]
-/// A JSON-RPC response.
-pub struct JsonRpcRepsonse {
-    jsonrpc: String,
-    pub result: JsonRpcAnswer,
-    /// The request ID.
-    id: i64,
-}
-
-impl JsonRpcRepsonse {
-    pub fn unwrap<T>(self) -> Result<T>
-    where
-        T: DeserializeOwned,
-    {
-        match self.result {
-            JsonRpcAnswer::Result(x) => Ok(serde_json::from_value(x)?),
-            JsonRpcAnswer::Error(x) => anyhow::bail!("{:?}", x),
-        }
-    }
-}
-
-#[derive(Serialize, Debug, Deserialize)]
-#[serde(untagged)]
-/// JsonRpc [response object](https://www.jsonrpc.org/specification#response_object)
-pub enum JsonRpcAnswer {
-    Result(Value),
-    Error(JsonRpcError),
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct JsonRpcError {
-    code: i32,
-    message: String,
+#[derive(thiserror::Error, Debug)]
+enum JrpcClientError {
+    #[error("No endpoints available")]
+    NoEndpointsAvailable,
+    #[error("Error response ({0}): {1}")]
+    ErrorResponse(i32, String),
 }
 
 #[cfg(test)]
@@ -432,43 +366,37 @@ mod test {
         let rpc = [
             // "http://127.0.0.1:8081",
             "http://34.78.198.249:8081/rpc",
-            "https://extension-api.broxus.com/rpc",
+            "https://jrpc.everwallet.net/rpc",
         ]
         .iter()
         .map(|x| x.parse().unwrap())
         .collect::<Vec<_>>();
 
-        let balanced_client = LoadBalancedRpc::new(
+        let balanced_client = JrpcClient::new(
             rpc,
-            LoadBalancedRpcOptions {
-                prove_interval: Duration::from_secs(10),
+            JrpcClientOptions {
+                probe_interval: Duration::from_secs(10),
             },
         )
         .await
         .unwrap();
 
-        let request = JrpcRequest {
-            id: 1337,
-            method: "getLatestKeyBlock",
-            params: (),
-        };
-
         for _ in 0..100 {
-            let response = balanced_client.request(request.clone()).await;
-            log::info!(
-                "response is ok: {}",
-                matches!(response.result, JsonRpcAnswer::Result(_))
-            );
+            let response = balanced_client
+                .request::<_, serde_json::Value>("getLatestKeyBlock", ())
+                .await
+                .unwrap();
+            log::info!("response is ok: {response:?}");
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
 
     #[tokio::test]
     async fn test_get() {
-        let pr = LoadBalancedRpc::new(
-            ["https://extension-api.broxus.com/rpc".parse().unwrap()],
-            LoadBalancedRpcOptions {
-                prove_interval: Duration::from_secs(10),
+        let pr = JrpcClient::new(
+            ["https://jrpc.everwallet.net/rpc".parse().unwrap()],
+            JrpcClientOptions {
+                probe_interval: Duration::from_secs(10),
             },
         )
         .await
