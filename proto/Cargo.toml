@@ -1,0 +1,13 @@
+[package]
+name = "everscale-proto"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "=1.0.60"
+tonic = { version = "0.8.0", features = ["codegen", "transport", "prost"], default-features = false }
+prost = "0.11.0"
+
+[build-dependencies]
+tonic-build = { version = "0.8.0", features = ["prost-build"] }
+prost-build = "0.11.1"

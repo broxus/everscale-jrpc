@@ -51,12 +51,14 @@ use axum::routing::post;
 use axum::Extension;
 use axum_jrpc::error::{JsonRpcError, JsonRpcErrorReason};
 use axum_jrpc::JsonRpcResponse;
+pub use everscale_jrpc_models as models;
 use everscale_jrpc_models::*;
+pub use grpc::{GrpcServer as RpcSvc, RpcServer};
 
 use self::state::Counters;
 pub use self::state::{JrpcMetrics, JrpcState};
-pub use everscale_jrpc_models as models;
 
+mod grpc;
 mod state;
 
 pub struct JrpcServer {
@@ -109,13 +111,13 @@ async fn jrpc_router(
     let answer_id = req.get_answer_id();
     let method = req.method();
     let answer = match method {
-        "getLatestKeyBlock" => match ctx.get_last_key_block() {
+        "getLatestKeyBlock" => match ctx.get_last_key_block_json() {
             Ok(b) => JsonRpcResponse::success(answer_id, b.as_ref()),
             Err(e) => make_error(answer_id, e, counters),
         },
         "getContractState" => {
             let request: GetContractStateRequest = req.parse_params()?;
-            match ctx.get_contract_state(&request.address) {
+            match ctx.get_contract_state_json(&request.address) {
                 Ok(state) => JsonRpcResponse::success(answer_id, state),
                 Err(e) => make_error(answer_id, e, counters),
             }

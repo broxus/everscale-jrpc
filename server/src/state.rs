@@ -4,6 +4,8 @@ use std::sync::{Arc, Weak};
 use anyhow::Result;
 use arc_swap::ArcSwapOption;
 use everscale_jrpc_models::*;
+use everscale_proto::pb;
+use nekoton_abi::{GenTimings, LastTransactionId};
 use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
 use ton_block::{Deserializable, HashmapAugType, Serializable};
@@ -15,6 +17,7 @@ use super::{QueryError, QueryResult};
 pub struct JrpcState {
     engine: Weak<ton_indexer::Engine>,
     key_block_response: ArcSwapOption<serde_json::Value>,
+    key_block_grpc_response: ArcSwapOption<pb::GetlastKeyBlockResponse>,
     masterchain_accounts_cache: RwLock<Option<ShardAccounts>>,
     shard_accounts_cache: RwLock<FxHashMap<ton_block::ShardIdent, ShardAccounts>>,
     counters: Counters,
@@ -120,16 +123,26 @@ impl JrpcState {
         &self.counters
     }
 
-    pub(crate) fn get_last_key_block(&self) -> QueryResult<Arc<serde_json::Value>> {
+    pub(crate) fn get_last_key_block_json(&self) -> QueryResult<Arc<serde_json::Value>> {
         self.key_block_response
             .load_full()
             .ok_or(QueryError::NotReady)
     }
 
-    pub(crate) fn get_contract_state(
+    pub(crate) fn get_last_key_block_grpc(&self) -> QueryResult<pb::GetlastKeyBlockResponse> {
+        let loaded = self.key_block_grpc_response.load();
+        let result = match *loaded {
+            Some(ref response) => (*response.clone()).clone(),
+            None => return Err(QueryError::NotReady),
+        };
+
+        Ok(result)
+    }
+
+    fn get_contract_state(
         &self,
         account: &ton_block::MsgAddressInt,
-    ) -> QueryResult<serde_json::Value> {
+    ) -> QueryResult<(ContractStateResponse, Option<Arc<RefMcStateHandle>>)> {
         let state = {
             let is_masterchain = account.is_masterchain();
             let account = account.address().get_bytestring_on_stack(0);
@@ -162,7 +175,7 @@ impl JrpcState {
 
         let state = match state {
             Ok(Some(state)) => state,
-            Ok(None) => return Ok(serde_json::to_value(ContractStateResponse::NotExists).unwrap()),
+            Ok(None) => return Ok((ContractStateResponse::NotExists, None)),
             Err(e) => {
                 log::error!("Failed to read shard account: {e:?}");
                 return Err(QueryError::InvalidAccountState);
@@ -174,26 +187,75 @@ impl JrpcState {
             .map_err(|_| QueryError::InvalidAccountState)?
         {
             ton_block::Account::AccountNone => {
-                return Ok(serde_json::to_value(ContractStateResponse::NotExists).unwrap())
+                return Ok((ContractStateResponse::NotExists, Some(guard)))
             }
             ton_block::Account::Account(account) => account,
         };
 
-        let response = serde_json::to_value(ContractStateResponse::Exists {
+        let response = ContractStateResponse::Exists {
             account,
-            timings: nekoton_abi::GenTimings::Known {
+            timings: GenTimings::Known {
                 gen_lt: state.last_transaction_id.lt(),
                 gen_utime: state.gen_utime,
             },
             last_transaction_id: state.last_transaction_id,
-        })
-        .map_err(|e| {
-            log::error!("Failed to serialize shard account: {e:?}");
-            QueryError::FailedToSerialize
-        })?;
+        };
 
-        // NOTE: state guard must be dropped after the serialization
-        drop(guard);
+        Ok((response, Some(guard)))
+    }
+
+    pub(crate) fn get_contract_state_json(
+        &self,
+        account: &ton_block::MsgAddressInt,
+    ) -> QueryResult<serde_json::Value> {
+        let (response, _guard) = self.get_contract_state(account)?;
+        let value = serde_json::to_value(response).map_err(|_| QueryError::FailedToSerialize)?;
+
+        Ok(value)
+    }
+
+    pub(crate) fn get_contract_state_grpc(
+        &self,
+        account: &ton_block::MsgAddressInt,
+    ) -> QueryResult<pb::StateResponse> {
+        let (response, _guard) = self.get_contract_state(account)?;
+
+        let response = match response {
+            ContractStateResponse::NotExists => pb::StateResponse {
+                contract_state: None,
+            },
+            ContractStateResponse::Exists {
+                account,
+                timings,
+                last_transaction_id,
+            } => {
+                let gen_timings = match timings {
+                    GenTimings::Unknown => None, // unreachable
+                    GenTimings::Known { gen_lt, gen_utime } => {
+                        Some(pb::state_response::GenTimings { gen_lt, gen_utime })
+                    }
+                };
+                let last_transaction_id = match last_transaction_id {
+                    LastTransactionId::Exact(id) => pb::state_response::LastTransactionId {
+                        hash: id.hash.into_vec(),
+                        lt: id.lt,
+                    },
+                    LastTransactionId::Inexact { .. } => {
+                        unreachable!("Exact is always set for state")
+                    }
+                };
+
+                pb::StateResponse {
+                    contract_state: Some(pb::state_response::ContractState {
+                        account: account
+                            .write_to_bytes()
+                            .map_err(|_| QueryError::FailedToSerialize)?,
+                        gen_timings,
+                        last_transaction_id: Some(last_transaction_id),
+                    }),
+                }
+            }
+        };
 
         Ok(response)
     }
@@ -220,6 +282,15 @@ impl JrpcState {
     }
 
     fn update_key_block(&self, block: &ton_block::Block) {
+        let block_bytes = match block.write_to_bytes() {
+            Ok(block_bytes) => block_bytes,
+            Err(e) => return log::error!("Failed to serialize block: {}", e),
+        };
+        self.key_block_grpc_response
+            .store(Some(Arc::new(pb::GetlastKeyBlockResponse {
+                key_block: block_bytes,
+            })));
+
         match serde_json::to_value(BlockResponse {
             block: block.clone(),
         }) {
@@ -272,7 +343,7 @@ pub struct JrpcMetrics {
 
 pub(crate) struct ShardAccount {
     pub data: ton_types::Cell,
-    pub last_transaction_id: nekoton_abi::LastTransactionId,
+    pub last_transaction_id: LastTransactionId,
     pub state_handle: Arc<RefMcStateHandle>,
     pub gen_utime: u32,
 }
@@ -288,12 +359,10 @@ impl ShardAccounts {
         match self.accounts.get(account)? {
             Some(account) => Ok(Some(ShardAccount {
                 data: account.account_cell(),
-                last_transaction_id: nekoton_abi::LastTransactionId::Exact(
-                    nekoton_abi::TransactionId {
-                        lt: account.last_trans_lt(),
-                        hash: *account.last_trans_hash(),
-                    },
-                ),
+                last_transaction_id: LastTransactionId::Exact(nekoton_abi::TransactionId {
+                    lt: account.last_trans_lt(),
+                    hash: *account.last_trans_hash(),
+                }),
                 state_handle: self.state_handle.clone(),
                 gen_utime: self.gen_utime,
             })),

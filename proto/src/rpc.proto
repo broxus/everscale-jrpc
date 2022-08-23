@@ -1,0 +1,102 @@
+syntax = "proto3";
+
+package rpc;
+
+
+message Address{
+  int32 workchain = 1;
+  bytes address = 2;
+}
+
+message StateRequest {
+  Address address = 1;
+}
+
+
+message StateResponse {
+  message GenTimings{
+    uint64 gen_lt = 1;
+    uint32 gen_utime = 2;
+
+  }
+  message LastTransactionId{
+    bytes hash = 1;
+    uint64 lt = 2;
+  }
+
+
+  message ContractState{
+    bytes account = 1;
+    optional GenTimings gen_timings = 2;
+    LastTransactionId last_transaction_id = 3;
+  }
+
+  optional ContractState contract_state = 1;
+
+}
+
+message SendMessageRequest {
+  bytes message = 1;
+  optional uint64 expire_at_unix_timestamp = 2;
+}
+
+message SendMessageResponse {
+  MessageStatus status = 1;
+}
+
+enum MessageStatus{
+  Delivered = 0;
+  Timeout = 1;
+}
+
+message GetlastKeyBlockRequest{}
+
+message GetlastKeyBlockResponse {
+  bytes key_block = 1;
+}
+
+message GetBlockRequest{
+  oneof Action{
+    uint64 startStream_shard = 1;
+    bool commit = 2;
+  }
+}
+
+message GetBlockResponse {
+  bytes block = 1;
+  uint32 seq_no = 2;
+}
+
+message CommitBlockRequest{
+  uint32 seq_no = 1;
+  uint64 shard = 2;
+  uint32 client_id = 3;
+}
+
+message CommitBlockResponse {
+  bool is_success = 1;
+}
+
+service Rpc{
+  rpc State(StateRequest) returns (StateResponse);
+  rpc GetlastKeyBlock(GetlastKeyBlockRequest) returns (GetlastKeyBlockResponse);
+  rpc SendMessage(SendMessageRequest) returns (stream SendMessageResponse);
+  // stream  stops until commit block is called
+  rpc GetBlock(stream GetBlockRequest) returns (stream GetBlockResponse);
+
+  rpc CommitBlock(CommitBlockRequest) returns (CommitBlockResponse);
+}
+
+
+
+message RegisterRequest {
+  uint32 ttl = 1;
+}
+
+message RegisterResponse {
+  uint32 client_id = 1;
+}
+
+service Register{
+  rpc RegisterClient(RegisterRequest) returns (RegisterResponse);
+}
