@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+mod clients_state;
 
 use anyhow::Result;
 use axum::async_trait;
@@ -11,6 +12,7 @@ use everscale_proto::pb::{
     Address, GetlastKeyBlockRequest, GetlastKeyBlockResponse, SendMessageRequest, StateRequest,
     StateResponse,
 };
+use futures::StreamExt;
 use tokio::sync::Notify;
 use ton_block::{Deserializable, MsgAddressInt};
 use ton_types::FxDashMap;
@@ -21,16 +23,14 @@ use crate::{JrpcState, QueryResult};
 #[derive(Clone)]
 pub struct GrpcServer {
     state: Arc<JrpcState>,
-    clients_counter: Arc<AtomicU32>,
-    shards_commit_map: Arc<ShardsCommitMap>,
+    clients_state: Arc<clients_state::ClientProgress>,
 }
 
 impl GrpcServer {
     pub fn new(state: Arc<JrpcState>) -> Self {
         Self {
             state,
-            clients_counter: Default::default(),
-            shards_commit_map: Arc::new(ShardsCommitMap::new()),
+            clients_state: clients_state::ClientProgress::new(),
         }
     }
 }
@@ -132,7 +132,10 @@ impl everscale_proto::pb::rpc_server::Rpc for GrpcServer {
         todo!()
     }
 
-    type GetBlockStream = ();
+    type GetBlockStream = futures::stream::BoxStream<
+        'static,
+        Result<everscale_proto::pb::GetBlockResponse, tonic::Status>,
+    >;
 
     async fn get_block(
         &self,
@@ -147,55 +150,26 @@ impl everscale_proto::pb::rpc_server::Rpc for GrpcServer {
     ) -> Result<Response<pb::CommitBlockResponse>, Status> {
         todo!()
     }
-}
 
-type ClientID = u32;
+    async fn register_client(
+        &self,
+        request: Request<pb::RegisterRequest>,
+    ) -> std::result::Result<Response<pb::RegisterResponse>, Status> {
+        let ttl = Duration::from_secs(request.into_inner().ttl as u64);
+        let client_id = self.clients_state.next_id(ttl);
 
-struct Committed {
-    client_id: ClientID,
-    block_id: u32,
-    client_lease_deadline: Instant,
-    notify: Arc<Notify>,
-}
-
-#[derive(Default)]
-struct ShardsCommitMap {
-    shards_commit_map: Mutex<HashMap<u64, Committed>>,
-}
-
-impl ShardsCommitMap {
-    fn new() -> Self {
-        Self {
-            shards_commit_map: Default::default(),
-        }
+        Ok(Response::new(pb::RegisterResponse { client_id }))
     }
 
-    async fn commit(&self, client_id: ClientID, block_id: u32, shard_id: u64) {
-        let mut map = self.shards_commit_map.lock().unwrap();
+    type LeasePingStream =
+        futures::stream::BoxStream<'static, Result<pb::LeasePingResponse, tonic::Status>>;
 
-        let mut commited = map.entry(shard_id).or_insert_with(|| Committed {
-            client_id,
-            block_id,
-            client_lease_deadline: Instant::now() + Duration::from_secs(20), //todo: configurable?
-            notify: Arc::new(Notify::new()),
-        });
-        if block_id + 1 + 1 >= commited.block_id {
-            commited.notify.notify_one();
-            return;
-        }
-    }
+    async fn lease_ping(
+        &self,
+        request: Request<Streaming<pb::LeasePingRequest>>,
+    ) -> std::result::Result<Response<Self::LeasePingStream>, Status> {
+        let stream = request.into_inner();
 
-    async fn wait_for_commit(&self, shard: u64) -> Result<()> {
-        let committed = {
-            let mut map = self.shards_commit_map.lock().unwrap();
-
-            match map.get(&shard).map(|x| x.notify.clone()) {
-                None => return Ok(()),
-                Some(w) => w,
-            }
-        };
-        committed.notified().await;
-
-        Ok(())
+        Ok(Response::new(self.clients_state.ping_pong(stream).boxed()))
     }
 }

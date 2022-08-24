@@ -77,14 +77,24 @@ message CommitBlockResponse {
   bool is_success = 1;
 }
 
+message LeasePingRequest{
+  uint32 lease_id = 1;
+}
+
+message LeasePingResponse {
+  bool is_success = 1;
+}
+
 service Rpc{
   rpc State(StateRequest) returns (StateResponse);
   rpc GetlastKeyBlock(GetlastKeyBlockRequest) returns (GetlastKeyBlockResponse);
   rpc SendMessage(SendMessageRequest) returns (stream SendMessageResponse);
   // stream  stops until commit block is called
   rpc GetBlock(stream GetBlockRequest) returns (stream GetBlockResponse);
-
   rpc CommitBlock(CommitBlockRequest) returns (CommitBlockResponse);
+
+  rpc RegisterClient(RegisterRequest) returns (RegisterResponse);
+  rpc LeasePing(stream LeasePingRequest) returns (stream LeasePingResponse);
 }
 
 
@@ -95,8 +105,4 @@ message RegisterRequest {
 
 message RegisterResponse {
   uint32 client_id = 1;
-}
-
-service Register{
-  rpc RegisterClient(RegisterRequest) returns (RegisterResponse);
 }

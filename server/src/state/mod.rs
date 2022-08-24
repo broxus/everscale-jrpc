@@ -12,6 +12,7 @@ use ton_block::{Deserializable, HashmapAugType, Serializable};
 use ton_indexer::utils::{BlockStuff, RefMcStateHandle, ShardStateStuff};
 
 use super::{QueryError, QueryResult};
+mod message_queue;
 
 #[derive(Default)]
 pub struct JrpcState {
