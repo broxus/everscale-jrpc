@@ -140,6 +140,10 @@ impl JrpcClient {
         }
     }
 
+    pub async fn get_latest_key_block(&self) -> Result<BlockResponse> {
+        self.request("getLatestKeyBlock", ()).await
+    }
+
     async fn request<'a, T, D>(&self, method: &'a str, params: T) -> Result<D>
     where
         T: Serialize,
@@ -393,14 +397,7 @@ mod test {
 
     #[tokio::test]
     async fn test_get() {
-        let pr = JrpcClient::new(
-            ["https://jrpc.everwallet.net/rpc".parse().unwrap()],
-            JrpcClientOptions {
-                probe_interval: Duration::from_secs(10),
-            },
-        )
-        .await
-        .unwrap();
+        let pr = get_client().await;
 
         pr.get_contract_state(
             &MsgAddressInt::from_str(
@@ -432,5 +429,24 @@ mod test {
             .await
             .unwrap()
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn test_key_block() {
+        let pr = get_client().await;
+
+        pr.get_latest_key_block().await.unwrap();
+    }
+
+    async fn get_client() -> JrpcClient {
+        let pr = JrpcClient::new(
+            ["https://jrpc.everwallet.net/rpc".parse().unwrap()],
+            JrpcClientOptions {
+                probe_interval: Duration::from_secs(10),
+            },
+        )
+        .await
+        .unwrap();
+        pr
     }
 }
