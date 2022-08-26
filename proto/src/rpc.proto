@@ -56,15 +56,11 @@ message GetlastKeyBlockResponse {
 }
 
 message GetBlockRequest{
-  oneof Action{
-    uint64 startStream_shard = 1;
-    bool commit = 2;
-  }
+  uint32 lease_id = 1;
 }
 
 message GetBlockResponse {
   bytes block = 1;
-  uint32 seq_no = 2;
 }
 
 message CommitBlockRequest{
@@ -90,7 +86,7 @@ service Rpc{
   rpc GetlastKeyBlock(GetlastKeyBlockRequest) returns (GetlastKeyBlockResponse);
   rpc SendMessage(SendMessageRequest) returns (stream SendMessageResponse);
   // stream  stops until commit block is called
-  rpc GetBlock(stream GetBlockRequest) returns (stream GetBlockResponse);
+  rpc BlockStream(GetBlockRequest) returns (stream GetBlockResponse);
   rpc CommitBlock(CommitBlockRequest) returns (CommitBlockResponse);
 
   rpc RegisterClient(RegisterRequest) returns (RegisterResponse);

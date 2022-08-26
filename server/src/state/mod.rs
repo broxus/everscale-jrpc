@@ -238,7 +238,7 @@ impl JrpcState {
                 };
                 let last_transaction_id = match last_transaction_id {
                     LastTransactionId::Exact(id) => pb::state_response::LastTransactionId {
-                        hash: id.hash.into_vec(),
+                        hash: id.hash.into_vec().into(),
                         lt: id.lt,
                     },
                     LastTransactionId::Inexact { .. } => {
@@ -250,6 +250,7 @@ impl JrpcState {
                     contract_state: Some(pb::state_response::ContractState {
                         account: account
                             .write_to_bytes()
+                            .map(|b| b.into())
                             .map_err(|_| QueryError::FailedToSerialize)?,
                         gen_timings,
                         last_transaction_id: Some(last_transaction_id),
@@ -284,7 +285,7 @@ impl JrpcState {
 
     fn update_key_block(&self, block: &ton_block::Block) {
         let block_bytes = match block.write_to_bytes() {
-            Ok(block_bytes) => block_bytes,
+            Ok(block_bytes) => block_bytes.into(),
             Err(e) => return log::error!("Failed to serialize block: {}", e),
         };
         self.key_block_grpc_response

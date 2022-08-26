@@ -9,9 +9,10 @@ use axum::async_trait;
 use everscale_proto::pb;
 pub use everscale_proto::pb::rpc_server::RpcServer;
 use everscale_proto::pb::{
-    Address, GetlastKeyBlockRequest, GetlastKeyBlockResponse, SendMessageRequest, StateRequest,
-    StateResponse,
+    Address, GetBlockRequest, GetlastKeyBlockRequest, GetlastKeyBlockResponse, SendMessageRequest,
+    StateRequest, StateResponse,
 };
+use futures::stream::BoxStream;
 use futures::StreamExt;
 use tokio::sync::Notify;
 use ton_block::{Deserializable, MsgAddressInt};
@@ -52,7 +53,7 @@ impl everscale_proto::pb::rpc_server::Rpc for GrpcServer {
             Some(a) => a,
         };
 
-        let address_bytes: [u8; 32] = match address.address.try_into() {
+        let address_bytes: [u8; 32] = match address.address.as_ref().try_into() {
             Ok(a) => a,
             Err(_) => {
                 return Err(tonic::Status::new(
@@ -100,10 +101,8 @@ impl everscale_proto::pb::rpc_server::Rpc for GrpcServer {
         Ok(tonic::Response::new(key_block))
     }
 
-    type SendMessageStream = futures::stream::BoxStream<
-        'static,
-        Result<everscale_proto::pb::SendMessageResponse, tonic::Status>,
-    >;
+    type SendMessageStream =
+        BoxStream<'static, Result<everscale_proto::pb::SendMessageResponse, tonic::Status>>;
 
     async fn send_message(
         &self,
@@ -132,15 +131,12 @@ impl everscale_proto::pb::rpc_server::Rpc for GrpcServer {
         todo!()
     }
 
-    type GetBlockStream = futures::stream::BoxStream<
-        'static,
-        Result<everscale_proto::pb::GetBlockResponse, tonic::Status>,
-    >;
+    type BlockStreamStream = BoxStream<'static, Result<pb::GetBlockResponse, tonic::Status>>;
 
-    async fn get_block(
+    async fn block_stream(
         &self,
-        request: Request<Streaming<pb::GetBlockRequest>>,
-    ) -> Result<Response<Self::GetBlockStream>, Status> {
+        request: Request<GetBlockRequest>,
+    ) -> std::result::Result<Response<Self::BlockStreamStream>, Status> {
         todo!()
     }
 
@@ -161,8 +157,7 @@ impl everscale_proto::pb::rpc_server::Rpc for GrpcServer {
         Ok(Response::new(pb::RegisterResponse { client_id }))
     }
 
-    type LeasePingStream =
-        futures::stream::BoxStream<'static, Result<pb::LeasePingResponse, tonic::Status>>;
+    type LeasePingStream = BoxStream<'static, Result<pb::LeasePingResponse, tonic::Status>>;
 
     async fn lease_ping(
         &self,

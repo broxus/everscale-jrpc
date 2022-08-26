@@ -16,11 +16,16 @@ serde_json = "1.0.80"
 tokio = { version = "1.20.1", features = ["full"] }
 
 ton_abi = { git = "https://github.com/broxus/ton-labs-abi" }
+ton_types = { git = "https://github.com/broxus/ton-labs-types" }
 ton_block = { git = "https://github.com/broxus/ton-labs-block" }
 
 nekoton = { git = "https://github.com/broxus/nekoton.git", default-features = false }
 
+nekoton-abi = { git = "https://github.com/broxus/nekoton.git" }
 everscale-jrpc-models = { path = "../models" }
+everscale-proto = { path = "../proto" }
+tonic = { version = "0.8.0", default-features = false, features = ["channel"] }
+tokio-util = "0.7.3"
 
 [dev-dependencies]
 env_logger = "0.9.0"

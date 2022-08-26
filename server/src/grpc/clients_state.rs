@@ -3,7 +3,7 @@ use std::sync::atomic::AtomicU32;
 use std::sync::{atomic, Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use everscale_proto::pb;
 use futures::{SinkExt, Stream, StreamExt};
 use tokio::sync::Notify;
@@ -80,6 +80,26 @@ impl ClientProgress {
         rx
     }
 
+    pub fn commit_block(&self, client_id: ClientID, seq_no: u32, shard: u64) -> Result<()> {
+        let client = self
+            .live_clients
+            .get(&client_id)
+            .map(|x| x.clone())
+            .context("Client not found")?;
+
+        {
+            let mut client = client.lock().unwrap();
+            client.commit(shard, seq_no);
+        }
+
+        self.shard_notifies
+            .entry(shard)
+            .or_insert_with(|| ShardNotify::new())
+            .commit(seq_no);
+
+        Ok(())
+    }
+
     fn ping_client(&self, client_id: &ClientID) -> Option<()> {
         let client = self.live_clients.get(client_id)?.value().clone();
         {
@@ -127,16 +147,16 @@ impl ClientRecord {
         }))
     }
 
-    fn update(&mut self, committed: Committed) {
-        self.committed = committed;
-    }
-
     fn ping(&mut self) {
         self.deadline_at = Instant::now() + Duration::from_secs(10);
     }
 
     fn is_alive(&self) -> bool {
         self.deadline_at > Instant::now()
+    }
+
+    fn commit(&mut self, shard: u64, seq_no: u32) {
+        self.committed.map.insert(shard, seq_no);
     }
 }
 
@@ -166,9 +186,21 @@ impl ShardNotify {
         }
     }
 
-    async fn commit(&self, block_id: u32) {
-        self.last_block_id
-            .store(block_id, atomic::Ordering::Release);
-        self.notify.notify_one();
+    fn commit(&self, block_id: u32) {
+        let update_result = self.last_block_id.fetch_update(
+            atomic::Ordering::AcqRel,
+            atomic::Ordering::Acquire,
+            |x| {
+                if x < block_id {
+                    Some(block_id)
+                } else {
+                    None
+                }
+            },
+        );
+
+        if update_result.is_ok() {
+            self.notify.notify_one()
+        };
     }
 }
