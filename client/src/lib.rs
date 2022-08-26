@@ -8,10 +8,11 @@ use anyhow::{Context, Result};
 use everscale_jrpc_models::*;
 use futures::StreamExt;
 use nekoton::transport::models::ExistingContract;
+use nekoton::utils::SimpleClock;
 use parking_lot::RwLock;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use ton_block::{Message, MsgAddressInt};
+use ton_block::{Account, Message, MsgAddressInt};
 
 #[derive(Clone)]
 pub struct JrpcClient {
@@ -74,7 +75,6 @@ impl JrpcClient {
         input: &[ton_abi::Token],
     ) -> Result<Option<nekoton::abi::ExecutionOutput>> {
         use nekoton::abi::FunctionExt;
-        use nekoton::utils::SimpleClock;
 
         let state = match self.get_contract_state(address).await? {
             Some(a) => a,
@@ -140,8 +140,43 @@ impl JrpcClient {
         }
     }
 
+    /// applies `message` to account set as dst and returns the resulting transaction.
+    /// Useful for testing purposes.
+    pub async fn apply_message(&self, message: &Message) -> Result<ton_block::Transaction> {
+        let message_dst = message
+            .dst()
+            .context("Only inbound external messages are allowed")?;
+
+        let config = self.get_blockchain_config().await?;
+        let dst_account = match self.get_contract_state(&message_dst).await? {
+            None => Account::AccountNone,
+            Some(ac) => Account::Account(ac.account),
+        };
+
+        let executor = nekoton_abi::Executor::new(&SimpleClock, config, dst_account)
+            .context("Failed to create executor")?;
+
+        executor.run(message)
+    }
+
     pub async fn get_latest_key_block(&self) -> Result<BlockResponse> {
         self.request("getLatestKeyBlock", ()).await
+    }
+
+    pub async fn get_blockchain_config(&self) -> Result<ton_executor::BlockchainConfig> {
+        let key_block = self.get_latest_key_block().await?;
+        let block = key_block.block;
+
+        let extra = block.read_extra()?;
+
+        let master = extra.read_custom()?.context("No masterchain block extra")?;
+
+        let params = master.config().context("Invalid config")?.clone();
+
+        let config =
+            ton_executor::BlockchainConfig::with_config(params).context("Invalid config")?;
+
+        Ok(config)
     }
 
     async fn request<'a, T, D>(&self, method: &'a str, params: T) -> Result<D>

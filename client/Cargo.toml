@@ -16,9 +16,11 @@ serde_json = "1.0.80"
 tokio = { version = "1.20.1", features = ["full"] }
 
 ton_abi = { git = "https://github.com/broxus/ton-labs-abi" }
+ton_executor = { git = "https://github.com/broxus/ton-labs-executor" }
 ton_block = { git = "https://github.com/broxus/ton-labs-block" }
 
 nekoton = { git = "https://github.com/broxus/nekoton.git", default-features = false }
+nekoton-abi = { git = "https://github.com/broxus/nekoton.git", default-features = false }
 
 everscale-jrpc-models = { path = "../models" }
 
