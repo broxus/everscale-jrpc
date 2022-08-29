@@ -1,12 +1,15 @@
-use std::collections::HashMap;
+use std::cmp::{Ordering, Reverse};
+use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::sync::atomic::AtomicU32;
 use std::sync::{atomic, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use axum::body::Bytes;
 use everscale_proto::pb;
 use futures::{SinkExt, Stream, StreamExt};
 use tokio::sync::Notify;
+use ton_block::Block;
 use ton_types::FxDashMap;
 
 type ClientID = u32;
@@ -17,6 +20,7 @@ pub(crate) struct ClientProgress {
     user_commits: Mutex<Vec<Committed>>,
     shard_notifies: FxDashMap<u64, Arc<ShardNotify>>,
     live_clients: FxDashMap<ClientID, Arc<Mutex<ClientRecord>>>,
+    client_queues: FxDashMap<ClientID, Arc<Mutex<ClientQueue>>>,
 }
 
 impl ClientProgress {
@@ -124,6 +128,8 @@ impl ClientProgress {
             }
         });
     }
+
+    pub fn fanout_clients(&self, block: pb::GetBlockResponse) {}
 }
 
 struct ClientRecord {
@@ -203,4 +209,8 @@ impl ShardNotify {
             self.notify.notify_one()
         };
     }
+}
+
+struct ClientQueue {
+    queue: Mutex<VecDeque<pb::GetBlockResponse>>,
 }

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+mod block_sync;
 mod clients_state;
 
 use anyhow::Result;
@@ -15,7 +16,8 @@ use everscale_proto::pb::{
 use futures::stream::BoxStream;
 use futures::StreamExt;
 use tokio::sync::Notify;
-use ton_block::{Deserializable, MsgAddressInt};
+use ton_block::{Deserializable, MsgAddressInt, Serializable};
+use ton_indexer::utils::{BlockIdExtExtension, BlockStuff};
 use ton_types::FxDashMap;
 use tonic::{Request, Response, Status, Streaming};
 
@@ -25,6 +27,7 @@ use crate::{JrpcState, QueryResult};
 pub struct GrpcServer {
     state: Arc<JrpcState>,
     clients_state: Arc<clients_state::ClientProgress>,
+    block_sync: Arc<block_sync::GrpcBlockHandler>,
 }
 
 impl GrpcServer {
@@ -32,7 +35,26 @@ impl GrpcServer {
         Self {
             state,
             clients_state: clients_state::ClientProgress::new(),
+            block_sync: Arc::new(block_sync::GrpcBlockHandler::new()),
         }
+    }
+
+    async fn handle_block(&self, block_stuff: &BlockStuff) -> Result<()> {
+        if block_stuff.id().is_masterchain() {
+            self.block_sync.handle_mc_block(block_stuff).await
+        } else {
+            self.fan_out_block(block_stuff).await;
+            self.block_sync.handle_shard_block(block_stuff).await
+        }
+    }
+
+    async fn fan_out_block(&self, block_stuff: &BlockStuff) -> Result<()> {
+        let block = block_stuff.block().write_to_bytes()?.into();
+
+        let pb_block = pb::GetBlockResponse { block };
+        self.clients_state.fanout_clients(pb_block);
+
+        Ok(())
     }
 }
 
