@@ -1,8 +1,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 use anyhow::Result;
-use arc_swap::ArcSwapOption;
+use arc_swap::{ArcSwapOption, ArcSwapWeak};
 use everscale_jrpc_models::*;
 use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
@@ -13,7 +13,7 @@ use super::{QueryError, QueryResult};
 
 #[derive(Default)]
 pub struct JrpcState {
-    engine: Weak<ton_indexer::Engine>,
+    engine: ArcSwapWeak<ton_indexer::Engine>,
     key_block_response: ArcSwapOption<serde_json::Value>,
     masterchain_accounts_cache: RwLock<Option<ShardAccounts>>,
     shard_accounts_cache: RwLock<FxHashMap<ton_block::ShardIdent, ShardAccounts>>,
@@ -105,6 +105,7 @@ impl JrpcState {
     }
 
     pub(crate) async fn initialize(&self, engine: &Arc<ton_indexer::Engine>) -> Result<()> {
+        self.engine.store(Arc::downgrade(engine));
         let last_key_block = engine.load_last_key_block().await?;
         let key_block_response = serde_json::to_value(BlockResponse {
             block: last_key_block.block().clone(),
@@ -114,6 +115,10 @@ impl JrpcState {
             .compare_and_swap(&None::<Arc<_>>, Some(Arc::new(key_block_response)));
 
         Ok(())
+    }
+
+    pub(crate) fn is_ready(&self) -> bool {
+        self.engine.load().strong_count() > 0 && self.key_block_response.load().is_some()
     }
 
     pub(crate) fn counters(&self) -> &Counters {
@@ -199,7 +204,7 @@ impl JrpcState {
     }
 
     pub(crate) async fn send_message(&self, message: ton_block::Message) -> QueryResult<()> {
-        let engine = self.engine.upgrade().ok_or(QueryError::NotReady)?;
+        let engine = self.engine.load().upgrade().ok_or(QueryError::NotReady)?;
 
         let to = match message.header() {
             ton_block::CommonMsgInfo::ExtInMsgInfo(header) => header.dst.workchain_id(),

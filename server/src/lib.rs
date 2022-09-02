@@ -127,6 +127,12 @@ async fn jrpc_router(
                 Err(e) => make_error(answer_id, e, counters),
             }
         }
+        "getStatus" => JsonRpcResponse::success(
+            answer_id,
+            StatusResponse {
+                ready: ctx.is_ready(),
+            },
+        ),
         m => {
             counters.increase_not_found();
             req.method_not_found(m)

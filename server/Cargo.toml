@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0"
-arc-swap = "1.5"
+arc-swap = { version = "1.5", features = ["weak"] }
 axum = { version = "0.5", features = ["http2"] }
 axum-jrpc = "0.2.0"
 log = "0.4"

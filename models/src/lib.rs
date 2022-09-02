@@ -43,3 +43,9 @@ pub enum ContractStateResponse {
         last_transaction_id: nekoton_abi::LastTransactionId,
     },
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatusResponse {
+    pub ready: bool,
+}
