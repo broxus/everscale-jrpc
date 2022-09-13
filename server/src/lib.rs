@@ -53,12 +53,12 @@ use axum_jrpc::error::{JsonRpcError, JsonRpcErrorReason};
 use axum_jrpc::JsonRpcResponse;
 pub use everscale_jrpc_models as models;
 use everscale_jrpc_models::*;
-pub use grpc::{GrpcServer as RpcSvc, RpcServer};
+pub use grpc::{Builder as RpcSvc, RpcServer, StreamServer};
 
 use self::state::Counters;
 pub use self::state::{JrpcMetrics, JrpcState};
 
-mod grpc;
+pub mod grpc;
 mod state;
 
 pub struct JrpcServer {

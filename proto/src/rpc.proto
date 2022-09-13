@@ -55,12 +55,18 @@ message GetlastKeyBlockResponse {
   bytes key_block = 1;
 }
 
-message GetBlockRequest{
-  uint32 lease_id = 1;
+message GetTransactionRequest{
+  oneof ty {
+    bytes hash = 1;
+    uint32 time = 2;
+  }
 }
 
-message GetBlockResponse {
-  bytes block = 1;
+message GetTransactionResp {
+  bytes hash = 1;
+  uint32 time = 2;
+  uint64  lt = 3;
+  bytes transaction = 4;
 }
 
 message CommitBlockRequest{
@@ -69,36 +75,13 @@ message CommitBlockRequest{
   uint32 client_id = 3;
 }
 
-message CommitBlockResponse {
-  bool is_success = 1;
-}
-
-message LeasePingRequest{
-  uint32 lease_id = 1;
-}
-
-message LeasePingResponse {
-  bool is_success = 1;
-}
 
 service Rpc{
   rpc State(StateRequest) returns (StateResponse);
   rpc GetlastKeyBlock(GetlastKeyBlockRequest) returns (GetlastKeyBlockResponse);
   rpc SendMessage(SendMessageRequest) returns (stream SendMessageResponse);
-  // stream  stops until commit block is called
-  rpc BlockStream(GetBlockRequest) returns (stream GetBlockResponse);
-  rpc CommitBlock(CommitBlockRequest) returns (CommitBlockResponse);
-
-  rpc RegisterClient(RegisterRequest) returns (RegisterResponse);
-  rpc LeasePing(stream LeasePingRequest) returns (stream LeasePingResponse);
 }
 
-
-
-message RegisterRequest {
-  uint32 ttl = 1;
-}
-
-message RegisterResponse {
-  uint32 client_id = 1;
+service Stream{
+  rpc GetTransaction(GetTransactionRequest) returns (stream GetTransactionResp);
 }

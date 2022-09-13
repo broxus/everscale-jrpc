@@ -1,65 +1,157 @@
-use std::collections::HashMap;
-use std::sync::atomic::AtomicU32;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
-mod block_sync;
-mod clients_state;
+use std::sync::Arc;
 
 use anyhow::Result;
 use axum::async_trait;
+use futures::stream::BoxStream;
+use ton_block::{Deserializable, MsgAddressInt};
+use ton_indexer::utils::{BlockStuff, ShardStateStuff};
+
+use tonic::{Request, Response, Status};
+
 use everscale_proto::pb;
-pub use everscale_proto::pb::rpc_server::RpcServer;
-use everscale_proto::pb::{
-    Address, GetBlockRequest, GetlastKeyBlockRequest, GetlastKeyBlockResponse, SendMessageRequest,
+use pb::rpc_server::Rpc;
+pub use pb::rpc_server::RpcServer;
+pub use pb::stream_server::StreamServer;
+use pb::{
+    GetTransactionRequest, GetlastKeyBlockRequest, GetlastKeyBlockResponse, SendMessageRequest,
     StateRequest, StateResponse,
 };
-use futures::stream::BoxStream;
-use futures::StreamExt;
-use tokio::sync::Notify;
-use ton_block::{Deserializable, MsgAddressInt, Serializable};
-use ton_indexer::utils::{BlockIdExtExtension, BlockStuff};
-use ton_types::FxDashMap;
-use tonic::{Request, Response, Status, Streaming};
 
-use crate::{JrpcState, QueryResult};
+use crate::JrpcState;
 
-#[derive(Clone)]
-pub struct GrpcServer {
+mod models;
+
+#[cfg(feature = "streaming")]
+mod tx_state;
+
+pub struct Builder {
     state: Arc<JrpcState>,
-    clients_state: Arc<clients_state::ClientProgress>,
-    block_sync: Arc<block_sync::GrpcBlockHandler>,
 }
 
-impl GrpcServer {
-    pub fn new(state: Arc<JrpcState>) -> Self {
-        Self {
-            state,
-            clients_state: clients_state::ClientProgress::new(),
-            block_sync: Arc::new(block_sync::GrpcBlockHandler::new()),
-        }
+impl Builder {
+    pub fn new(state: Arc<JrpcState>) -> Result<Self> {
+        Ok(Self { state })
     }
 
-    async fn handle_block(&self, block_stuff: &BlockStuff) -> Result<()> {
-        if block_stuff.id().is_masterchain() {
-            self.block_sync.handle_mc_block(block_stuff).await
-        } else {
-            self.fan_out_block(block_stuff).await;
-            self.block_sync.handle_shard_block(block_stuff).await
-        }
+    #[cfg(feature = "streaming")]
+    pub fn build_with_streaming<P: AsRef<std::path::Path>>(self, path: P) -> Result<GrpcService> {
+        use ton_block::HashmapAugType;
+        use ton_types::HashmapType;
+        use tonic::codegen::Bytes;
+
+        let stream = tx_state::StreamService::new(self.state.clone(), path)?;
+
+        Ok(GrpcService {
+            rpc: RpcService { state: self.state },
+            stream,
+        })
     }
 
-    async fn fan_out_block(&self, block_stuff: &BlockStuff) -> Result<()> {
-        let block = block_stuff.block().write_to_bytes()?.into();
+    #[cfg(not(feature = "streaming"))]
+    pub fn build(self) -> GrpcService {
+        GrpcService {
+            rpc: RpcService { state: self.state },
+        }
+    }
+}
 
-        let pb_block = pb::GetBlockResponse { block };
-        self.clients_state.fanout_clients(pb_block);
+#[derive(Clone)]
+pub struct GrpcService {
+    rpc: RpcService,
+    #[cfg(feature = "streaming")]
+    stream: tx_state::StreamService,
+}
+
+#[async_trait]
+impl Rpc for GrpcService {
+    async fn state(
+        &self,
+        request: Request<StateRequest>,
+    ) -> std::result::Result<Response<StateResponse>, Status> {
+        self.rpc.state(request).await
+    }
+
+    async fn getlast_key_block(
+        &self,
+        request: Request<GetlastKeyBlockRequest>,
+    ) -> std::result::Result<Response<GetlastKeyBlockResponse>, Status> {
+        self.rpc.getlast_key_block(request).await
+    }
+
+    type SendMessageStream = <RpcService as Rpc>::SendMessageStream;
+
+    async fn send_message(
+        &self,
+        request: Request<SendMessageRequest>,
+    ) -> std::result::Result<Response<Self::SendMessageStream>, Status> {
+        self.rpc.send_message(request).await
+    }
+}
+
+impl GrpcService {
+    pub async fn handle_block(
+        &self,
+        block_stuff: &BlockStuff,
+        shard_state: Option<&ShardStateStuff>,
+    ) -> Result<()> {
+        #[cfg(feature = "streaming")]
+        {
+            use axum::body::Bytes;
+            use ton_block::GetRepresentationHash;
+            use ton_block::HashmapAugType;
+            use ton_types::HashmapType;
+
+            let mut records = Vec::new();
+            let block_extra = block_stuff.block().read_extra()?;
+
+            block_extra
+                .read_account_blocks()?
+                .iterate_objects(|account_block| {
+                    account_block
+                        .transactions()
+                        .iterate_slices(|_, raw_transaction| {
+                            let cell = raw_transaction.reference(0)?;
+                            let boc: Bytes = ton_types::serialize_toc(&cell)?.into();
+                            let transaction =
+                                ton_block::Transaction::construct_from(&mut cell.into())?;
+                            match transaction.description.read_struct()? {
+                                ton_block::TransactionDescr::Ordinary(_) => {}
+                                _ => return Ok(true),
+                            };
+
+                            records.push(pb::GetTransactionResp {
+                                hash: transaction.hash()?.into_vec().into(),
+                                time: transaction.now,
+                                lt: transaction.lt,
+                                transaction: boc,
+                            });
+                            Ok(true)
+                        })?;
+                    Ok(true)
+                })?;
+
+            for tx in records {
+                self.stream.tx_state.add_tx(tx)?;
+            }
+
+            self.stream.tx_state.notify();
+        }
+
+        if let Some(shard_state) = shard_state {
+            self.rpc.state.handle_block(block_stuff, shard_state)?;
+        }
 
         Ok(())
     }
 }
 
+#[derive(Clone)]
+pub struct RpcService {
+    state: Arc<JrpcState>,
+}
+
 #[async_trait]
-impl everscale_proto::pb::rpc_server::Rpc for GrpcServer {
+impl Rpc for RpcService {
     async fn state(
         &self,
         request: tonic::Request<StateRequest>,
@@ -123,14 +215,13 @@ impl everscale_proto::pb::rpc_server::Rpc for GrpcServer {
         Ok(tonic::Response::new(key_block))
     }
 
-    type SendMessageStream =
-        BoxStream<'static, Result<everscale_proto::pb::SendMessageResponse, tonic::Status>>;
+    type SendMessageStream = BoxStream<'static, Result<pb::SendMessageResponse, tonic::Status>>;
 
     async fn send_message(
         &self,
         request: tonic::Request<SendMessageRequest>,
     ) -> Result<tonic::Response<Self::SendMessageStream>, tonic::Status> {
-        let mut request = request.into_inner();
+        let request = request.into_inner();
         let message = match ton_types::deserialize_tree_of_cells(&mut &*request.message) {
             Ok(m) => m,
             Err(e) => {
@@ -140,7 +231,7 @@ impl everscale_proto::pb::rpc_server::Rpc for GrpcServer {
                 ))
             }
         };
-        let message = match ton_block::Message::construct_from_cell(message) {
+        let _message = match ton_block::Message::construct_from_cell(message) {
             Ok(m) => m,
             Err(e) => {
                 return Err(tonic::Status::new(
@@ -152,41 +243,18 @@ impl everscale_proto::pb::rpc_server::Rpc for GrpcServer {
 
         todo!()
     }
+}
 
-    type BlockStreamStream = BoxStream<'static, Result<pb::GetBlockResponse, tonic::Status>>;
+#[cfg(feature = "streaming")]
+#[async_trait]
+impl pb::stream_server::Stream for GrpcService {
+    type GetTransactionStream =
+        <tx_state::StreamService as pb::stream_server::Stream>::GetTransactionStream;
 
-    async fn block_stream(
+    async fn get_transaction(
         &self,
-        request: Request<GetBlockRequest>,
-    ) -> std::result::Result<Response<Self::BlockStreamStream>, Status> {
-        todo!()
-    }
-
-    async fn commit_block(
-        &self,
-        request: Request<pb::CommitBlockRequest>,
-    ) -> Result<Response<pb::CommitBlockResponse>, Status> {
-        todo!()
-    }
-
-    async fn register_client(
-        &self,
-        request: Request<pb::RegisterRequest>,
-    ) -> std::result::Result<Response<pb::RegisterResponse>, Status> {
-        let ttl = Duration::from_secs(request.into_inner().ttl as u64);
-        let client_id = self.clients_state.next_id(ttl);
-
-        Ok(Response::new(pb::RegisterResponse { client_id }))
-    }
-
-    type LeasePingStream = BoxStream<'static, Result<pb::LeasePingResponse, tonic::Status>>;
-
-    async fn lease_ping(
-        &self,
-        request: Request<Streaming<pb::LeasePingRequest>>,
-    ) -> std::result::Result<Response<Self::LeasePingStream>, Status> {
-        let stream = request.into_inner();
-
-        Ok(Response::new(self.clients_state.ping_pong(stream).boxed()))
+        request: Request<GetTransactionRequest>,
+    ) -> std::result::Result<Response<Self::GetTransactionStream>, Status> {
+        self.stream.get_transaction(request).await
     }
 }
