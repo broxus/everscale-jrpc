@@ -56,10 +56,7 @@ message GetlastKeyBlockResponse {
 }
 
 message GetTransactionRequest{
-  oneof ty {
-    bytes hash = 1;
-    uint32 time = 2;
-  }
+  uint32 time = 1;
 }
 
 message GetTransactionResp {

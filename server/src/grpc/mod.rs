@@ -130,11 +130,14 @@ impl GrpcService {
                     Ok(true)
                 })?;
 
+            let is_empty = records.is_empty();
             for tx in records {
                 self.stream.tx_state.add_tx(tx)?;
             }
 
-            self.stream.tx_state.notify();
+            if !is_empty {
+                self.stream.tx_state.notify();
+            }
         }
 
         if let Some(shard_state) = shard_state {
