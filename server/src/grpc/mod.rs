@@ -35,10 +35,6 @@ impl Builder {
 
     #[cfg(feature = "streaming")]
     pub fn build_with_streaming<P: AsRef<std::path::Path>>(self, path: P) -> Result<GrpcService> {
-        use ton_block::HashmapAugType;
-        use ton_types::HashmapType;
-        use tonic::codegen::Bytes;
-
         let stream = tx_state::StreamService::new(self.state.clone(), path)?;
 
         Ok(GrpcService {

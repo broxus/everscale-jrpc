@@ -29,9 +29,8 @@ everscale-proto = { path = "../proto" }
 futures = "0.3.23"
 tokio = { version = "1.20.1", features = ["sync"] }
 
-rocksdb-builder = { git = "https://github.com/broxus/rocksdb-builder.git", optional = false }
-rocksdb = { version = "0.19", features = ["multi-threaded-cf", "zstd", "lz4", "jemalloc"], default-features = false }
-bincode = { version = "2.0.0-rc.1",features = ["bincode_derive"] }
+rocksdb-builder = { git = "https://github.com/broxus/rocksdb-builder.git", optional = true }
+rocksdb = { version = "0.19", features = ["multi-threaded-cf", "zstd", "lz4", "jemalloc"], default-features = false, optional = true }
 
 [dev-dependencies]
 hex = "0.4"
@@ -39,5 +38,5 @@ tokio = { version = "1", features = ["rt"] }
 
 [features]
 default = ["compression"]
-compression = ["dep:tower-http"]
+compression = ["dep:tower-http", "dep:rocksdb-builder", "dep:rocksdb"]
 streaming = []

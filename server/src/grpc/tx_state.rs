@@ -1,23 +1,17 @@
-use super::JrpcState;
-use anyhow::{Context, Result};
-use bincode::config::{Fixint, LittleEndian, SkipFixedArrayLength};
-use everscale_proto::pb;
-use everscale_proto::pb::{GetTransactionRequest, GetTransactionResp};
-use futures::stream::BoxStream;
-use futures::{Sink, SinkExt, Stream, StreamExt};
-use parking_lot::Mutex;
-use rocksdb_builder::{DbCaches, Tree};
-use std::ops::Deref;
 use std::path::Path;
 use std::sync::Arc;
-use ton_block::{GetRepresentationHash, Serializable};
+
+use anyhow::{bail, Context, Result};
+use futures::stream::BoxStream;
+use futures::{SinkExt, Stream, StreamExt};
+use rocksdb_builder::{DbCaches, Tree};
 use tonic::async_trait;
 use tonic::codegen::Bytes;
 
-const CONFIG: bincode::config::Configuration<LittleEndian, Fixint, SkipFixedArrayLength> =
-    bincode::config::standard()
-        .skip_fixed_array_length()
-        .with_fixed_int_encoding();
+use everscale_proto::pb;
+use everscale_proto::pb::{GetTransactionRequest, GetTransactionResp};
+
+use super::JrpcState;
 
 #[derive(Clone)]
 pub struct StreamService {
@@ -32,6 +26,9 @@ impl StreamService {
             tx_state: Arc::new(Db::new(path).context("Failed to create db client")?),
         })
     }
+    pub fn state(&self) -> Arc<JrpcState> {
+        self.state.clone()
+    }
 }
 
 #[async_trait]
@@ -45,7 +42,7 @@ impl pb::stream_server::Stream for StreamService {
         log::info!("get_transaction request: {:?}", request);
         let request = request.into_inner();
         let stream = match self.tx_state.clone().stream_transactions(request).await {
-            Ok(stream) => stream.map(|tx| Ok(tx)),
+            Ok(stream) => stream.map(Ok),
             Err(e) => {
                 log::error!("Failed to get stream: {}", e);
                 return Err(tonic::Status::new(tonic::Code::Internal, e.to_string()));
@@ -65,7 +62,7 @@ impl Db {
     pub fn new<P: AsRef<Path>>(file_path: P) -> Result<Self> {
         let caches = DbCaches::with_capacity(256 * 1024 * 1024)?;
         let db = rocksdb_builder::DbBuilder::new(file_path, &caches)
-            .options(|opts, caches| {
+            .options(|opts, _caches| {
                 opts.set_level_compaction_dynamic_level_bytes(true);
 
                 // compression opts
@@ -109,7 +106,7 @@ impl Db {
             hash: tx.hash.as_ref().try_into()?,
         };
 
-        let key = bincode::encode_to_vec(key, CONFIG)?;
+        let key = key.as_array();
         self.tree.insert(key, tx.transaction)?;
 
         Ok(())
@@ -136,7 +133,7 @@ impl Db {
             ),
         };
 
-        let key_prefix = bincode::encode_to_vec(key_prefix, CONFIG)?;
+        let key_prefix = key_prefix.as_array();
 
         let mut iter = self.tree.prefix_iterator(key_prefix);
         if to_skip {
@@ -145,30 +142,32 @@ impl Db {
         let mut last = None;
 
         loop {
-            let (key, value) = match iter.item() {
-                Some(item) => item,
-                None => break iter.status()?,
-            };
+            {
+                let (key, value) = match iter.item() {
+                    Some(item) => item,
+                    None => break iter.status()?,
+                };
+                let key = key.to_vec();
+                let k = TxKey::try_from_slice(&key)?;
+                let value = value.to_vec();
+                let transaction = Bytes::from(value);
 
-            let key = key.to_vec();
-            let (k, _): (TxKey, _) = bincode::decode_from_slice(&key, CONFIG)?;
-            let value = value.to_vec();
-            let transaction = Bytes::from(value);
-
-            let resp = GetTransactionResp {
-                time: k.time,
-                lt: k.lt,
-                hash: k.hash.to_vec().into(),
-                transaction,
-            };
-            last = Some(resp.clone());
-            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-            println!("Sending tx with time {}", resp.time);
-            tx.send(resp).await?;
+                let resp = GetTransactionResp {
+                    time: k.time,
+                    lt: k.lt,
+                    hash: k.hash.to_vec().into(),
+                    transaction,
+                };
+                last = Some(resp.clone());
+                tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                println!("Sending tx with time {}", resp.time);
+                tx.send(resp).await?;
+            }
 
             iter.next();
         }
 
+        #[allow(clippy::field_reassign_with_default)]
         let last = match last {
             Some(a) => a,
             None => {
@@ -191,7 +190,7 @@ impl Db {
         self: Arc<Self>,
         request: GetTransactionRequest,
     ) -> Result<impl Stream<Item = GetTransactionResp>> {
-        let (mut tx, rx) = futures::channel::mpsc::channel(1);
+        let (tx, rx) = futures::channel::mpsc::channel(1);
         let this = self.clone();
 
         tokio::spawn(async move {
@@ -209,10 +208,9 @@ impl Db {
                         .await
                         .context("Failed to get tx")?;
                 }
-
-                Ok(())
             };
-            if let Err(e) = res.await {
+            let res: Result<()> = res.await;
+            if let Err(e) = res {
                 let e: anyhow::Error = e;
                 log::error!("Failed to stream transactions: {}", e);
             }
@@ -227,11 +225,33 @@ enum GetTx {
     Resp(GetTransactionRequest),
 }
 
-#[derive(Debug, Clone, Copy, bincode::Encode, bincode::Decode, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
 struct TxKey {
     time: u32,
     lt: u64,
     hash: [u8; 32],
+}
+
+impl TxKey {
+    pub fn as_array(&self) -> [u8; 44] {
+        let mut res = [0; 44];
+        res[..4].copy_from_slice(&self.time.to_be_bytes());
+        res[4..12].copy_from_slice(&self.lt.to_be_bytes());
+        res[12..].copy_from_slice(&self.hash);
+        res
+    }
+
+    #[allow(clippy::field_reassign_with_default)]
+    pub fn try_from_slice(slice: &[u8]) -> Result<Self> {
+        if slice.len() != 44 {
+            bail!("Invalid slice length");
+        }
+        let mut res = Self::default();
+        res.time = u32::from_be_bytes(slice[..4].try_into()?);
+        res.lt = u64::from_be_bytes(slice[4..12].try_into()?);
+        res.hash.copy_from_slice(&slice[12..]);
+        Ok(res)
+    }
 }
 
 /// Maps seqno to key block id
@@ -244,7 +264,6 @@ impl rocksdb_builder::Column for Transactions {
 
 #[cfg(test)]
 mod test {
-    use super::CONFIG;
     use crate::grpc::tx_state::TxKey;
 
     #[test]
@@ -252,12 +271,12 @@ mod test {
         let key = TxKey {
             time: 1,
             lt: 2,
-            hash: [3; 32],
+            hash: [255; 32],
         };
 
-        let encoded = bincode::encode_to_vec(&key, CONFIG).unwrap();
+        let encoded = key.as_array();
         println!("{}", hex::encode(&encoded));
-        let (decoded, _) = bincode::decode_from_slice(&encoded, CONFIG).unwrap();
+        let decoded = TxKey::try_from_slice(&encoded).unwrap();
 
         assert_eq!(key, decoded);
 
@@ -267,7 +286,7 @@ mod test {
             hash: [3; 32],
         };
 
-        let encoded2 = bincode::encode_to_vec(&key2, CONFIG).unwrap();
+        let encoded2 = key2.as_array();
 
         assert!(encoded < encoded2);
     }
