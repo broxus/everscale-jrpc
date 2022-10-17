@@ -25,7 +25,10 @@ impl JrpcClient {
         endpoints: I,
         options: JrpcClientOptions,
     ) -> Result<Self> {
-        let client = reqwest::ClientBuilder::new().gzip(true).build()?;
+        let client = reqwest::ClientBuilder::new()
+            .gzip(true)
+            .timeout(options.request_timeout)
+            .build()?;
         let client = Self {
             state: Arc::new(State {
                 endpoints: endpoints
@@ -37,12 +40,18 @@ impl JrpcClient {
         };
 
         let state = client.state.clone();
-        state.update_endpoints().await;
+        let mut live = state.update_endpoints().await;
 
         tokio::spawn(async move {
             loop {
-                tokio::time::sleep(options.probe_interval).await;
-                state.update_endpoints().await;
+                let sleep_time = if live != 0 {
+                    options.probe_interval
+                } else {
+                    options.aggressive_poll_interval
+                };
+
+                tokio::time::sleep(sleep_time).await;
+                live = state.update_endpoints().await;
             }
         });
 
@@ -198,12 +207,23 @@ pub struct JrpcClientOptions {
     ///
     /// Default: `60 sec`
     pub probe_interval: Duration,
+
+    /// How long to wait for a response from a node.
+    ///
+    /// Default: `1 sec`
+    pub request_timeout: Duration,
+    /// How long to wait between health checks in case if all nodes are down.
+    ///
+    /// Default: `1 sec`
+    pub aggressive_poll_interval: Duration,
 }
 
 impl Default for JrpcClientOptions {
     fn default() -> Self {
         Self {
-            probe_interval: Duration::from_secs(64),
+            probe_interval: Duration::from_secs(60),
+            request_timeout: Duration::from_secs(3),
+            aggressive_poll_interval: Duration::from_secs(1),
         }
     }
 }
@@ -263,7 +283,7 @@ impl State {
         live_endpoints.choose(&mut rand::thread_rng()).cloned()
     }
 
-    async fn update_endpoints(&self) {
+    async fn update_endpoints(&self) -> usize {
         // to preserve order of endpoints within round-robin
         let mut futures = futures::stream::FuturesOrdered::new();
         for endpoint in &self.endpoints {
@@ -293,6 +313,7 @@ impl State {
         }
 
         *old_endpoints = new_endpoints;
+        old_endpoints.len()
     }
 }
 
@@ -415,6 +436,7 @@ mod test {
             rpc,
             JrpcClientOptions {
                 probe_interval: Duration::from_secs(10),
+                ..Default::default()
             },
         )
         .await
@@ -478,6 +500,7 @@ mod test {
             ["https://jrpc.everwallet.net/rpc".parse().unwrap()],
             JrpcClientOptions {
                 probe_interval: Duration::from_secs(10),
+                ..Default::default()
             },
         )
         .await
