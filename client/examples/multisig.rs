@@ -21,9 +21,7 @@ async fn main() {
 
     let client = everscale_jrpc_client::JrpcClient::new(
         ["https://jrpc.everwallet.net/rpc".parse().unwrap()],
-        JrpcClientOptions {
-            probe_interval: Duration::from_secs(10),
-        },
+        JrpcClientOptions::default(),
     )
     .await
     .unwrap();
@@ -38,6 +36,7 @@ async fn main() {
 
     let tx = prepare_transfer(
         &nekoton::utils::SimpleClock,
+        MultisigType::SafeMultisigWallet,
         &signer.public,
         false,
         from,

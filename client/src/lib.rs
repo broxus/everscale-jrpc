@@ -9,10 +9,11 @@ use everscale_jrpc_models::*;
 use futures::StreamExt;
 use nekoton::transport::models::ExistingContract;
 use nekoton::utils::SimpleClock;
+use nekoton_utils::serde_address;
 use parking_lot::RwLock;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use ton_block::{Account, Message, MsgAddressInt};
+use ton_block::{Account, Deserializable, Message, MsgAddressInt, Transaction};
 
 #[derive(Clone)]
 pub struct JrpcClient {
@@ -188,6 +189,36 @@ impl JrpcClient {
         Ok(config)
     }
 
+    pub async fn get_transactions(
+        &self,
+        limit: u16,
+        account: &MsgAddressInt,
+        last_transaction_lt: Option<u64>,
+    ) -> Result<Vec<ton_block::Transaction>> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct GetTransactionsRequest<'a> {
+            #[serde(with = "serde_address")]
+            account: &'a MsgAddressInt,
+            limit: u16,
+            last_transaction_lt: u64,
+        }
+
+        let request = GetTransactionsRequest {
+            account,
+            limit,
+            last_transaction_lt: last_transaction_lt.unwrap_or(0),
+        };
+
+        let data: Vec<String> = self.request("getTransactionsList", request).await?;
+        let raw_transactions = data
+            .into_iter()
+            .map(|x| decode_raw_transaction(&x))
+            .collect::<Result<_>>()?;
+
+        Ok(raw_transactions)
+    }
+
     async fn request<'a, T, D>(&self, method: &'a str, params: T) -> Result<D>
     where
         T: Serialize,
@@ -200,6 +231,13 @@ impl JrpcClient {
 
         client.request(method, params).await
     }
+}
+
+fn decode_raw_transaction(boc: &str) -> anyhow::Result<Transaction> {
+    let bytes = base64::decode(boc)?;
+    let cell = ton_types::deserialize_tree_of_cells(&mut bytes.as_slice())?;
+    let data = ton_block::Transaction::construct_from(&mut cell.into())?;
+    Ok(data)
 }
 
 pub struct JrpcClientOptions {
@@ -442,7 +480,7 @@ mod test {
         .await
         .unwrap();
 
-        for _ in 0..100 {
+        for _ in 0..10 {
             let response = balanced_client
                 .request::<_, serde_json::Value>("getLatestKeyBlock", ())
                 .await
@@ -493,6 +531,22 @@ mod test {
         let pr = get_client().await;
 
         pr.get_latest_key_block().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_transations() {
+        let pr = get_client().await;
+
+        pr.get_transactions(
+            100,
+            &MsgAddressInt::from_str(
+                "-1:3333333333333333333333333333333333333333333333333333333333333333",
+            )
+            .unwrap(),
+            None,
+        )
+        .await
+        .unwrap();
     }
 
     async fn get_client() -> JrpcClient {
