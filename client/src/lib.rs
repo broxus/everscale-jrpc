@@ -30,6 +30,16 @@ impl JrpcClient {
             .gzip(true)
             .timeout(options.request_timeout)
             .build()?;
+
+        Self::with_client(client, endpoints, options).await
+    }
+
+    /// [endpoints] full URLs of the RPC endpoints.
+    pub async fn with_client<I: IntoIterator<Item = Url>>(
+        client: reqwest::Client,
+        endpoints: I,
+        options: JrpcClientOptions,
+    ) -> Result<Self> {
         let client = Self {
             state: Arc::new(State {
                 endpoints: endpoints
