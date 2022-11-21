@@ -3,11 +3,12 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use arc_swap::{ArcSwapOption, ArcSwapWeak};
-use everscale_jrpc_models::*;
 use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
 use ton_block::{Deserializable, HashmapAugType, Serializable};
 use ton_indexer::utils::{BlockStuff, RefMcStateHandle, ShardStateStuff};
+
+use everscale_jrpc_models::*;
 
 use super::{QueryError, QueryResult};
 
@@ -123,6 +124,21 @@ impl JrpcState {
 
     pub(crate) fn counters(&self) -> &Counters {
         &self.counters
+    }
+
+    pub(crate) fn timings(&self) -> QueryResult<EngineMetrics> {
+        let engine = self.engine.load().upgrade().ok_or(QueryError::NotReady)?;
+
+        let metrics = engine.metrics();
+        Ok(EngineMetrics {
+            last_mc_block_seqno: metrics.last_mc_block_seqno.load(Ordering::Acquire),
+            last_shard_client_mc_block_seqno: metrics
+                .last_shard_client_mc_block_seqno
+                .load(Ordering::Acquire),
+            last_mc_utime: metrics.last_mc_utime.load(Ordering::Acquire),
+            mc_time_diff: metrics.mc_time_diff.load(Ordering::Acquire),
+            shard_client_time_diff: metrics.shard_client_time_diff.load(Ordering::Acquire),
+        })
     }
 
     pub(crate) fn get_last_key_block(&self) -> QueryResult<Arc<serde_json::Value>> {

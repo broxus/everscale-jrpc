@@ -49,3 +49,12 @@ pub enum ContractStateResponse {
 pub struct StatusResponse {
     pub ready: bool,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EngineMetrics {
+    pub last_mc_block_seqno: u32,
+    pub last_shard_client_mc_block_seqno: u32,
+    pub last_mc_utime: u32,
+    pub mc_time_diff: i64,
+    pub shard_client_time_diff: i64,
+}

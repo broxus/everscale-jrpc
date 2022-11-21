@@ -45,6 +45,7 @@
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Result;
 use axum::routing::post;
@@ -93,7 +94,10 @@ impl JrpcServer {
             .route(&self.route, post(jrpc_router))
             .layer(service);
 
-        let future = axum::Server::try_bind(&listen_address)?.serve(router.into_make_service());
+        let future = axum::Server::try_bind(&listen_address)?
+            .http2_adaptive_window(true)
+            .tcp_keepalive(Duration::from_secs(60).into())
+            .serve(router.into_make_service());
 
         Ok(async move { future.await.unwrap() })
     }
@@ -133,6 +137,10 @@ async fn jrpc_router(
                 ready: ctx.is_ready(),
             },
         ),
+        "getTimings" => match ctx.timings() {
+            Ok(stats) => JsonRpcResponse::success(answer_id, stats),
+            Err(e) => make_error(answer_id, e, counters),
+        },
         m => {
             counters.increase_not_found();
             req.method_not_found(m)
