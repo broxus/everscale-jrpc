@@ -62,7 +62,7 @@ impl JrpcState {
 
             cache.insert(*block_info.shard(), shard_accounts);
             if block_info.after_merge() || block_info.after_split() {
-                log::warn!("Clearing shard states cache after shards merge/split");
+                tracing::warn!("Clearing shard states cache after shards merge/split");
 
                 let block_ids = block_info.read_prev_ids()?;
 
@@ -185,7 +185,8 @@ impl JrpcState {
             Ok(Some(state)) => state,
             Ok(None) => return Ok(serde_json::to_value(ContractStateResponse::NotExists).unwrap()),
             Err(e) => {
-                log::error!("Failed to read shard account: {e:?}");
+                let account = account.to_string();
+                tracing::error!(account, "Failed to read shard account: {e:?}");
                 return Err(QueryError::InvalidAccountState);
             }
         };
@@ -209,7 +210,7 @@ impl JrpcState {
             last_transaction_id: state.last_transaction_id,
         })
         .map_err(|e| {
-            log::error!("Failed to serialize shard account: {e:?}");
+            tracing::error!("Failed to serialize shard account: {e:?}");
             QueryError::FailedToSerialize
         })?;
 
@@ -246,7 +247,7 @@ impl JrpcState {
         }) {
             Ok(response) => self.key_block_response.store(Some(Arc::new(response))),
             Err(e) => {
-                log::error!("Failed to update key block: {e:?}");
+                tracing::error!("Failed to update key block: {e:?}");
             }
         }
     }

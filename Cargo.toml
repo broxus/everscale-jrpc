@@ -1,2 +1,2 @@
 [workspace]
-members = ["server", "models", "client"]
+members = ["client", "models", "server"]

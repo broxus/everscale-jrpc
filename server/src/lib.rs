@@ -48,15 +48,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
+use axum::extract::State;
 use axum::routing::post;
-use axum::Extension;
 use axum_jrpc::error::{JsonRpcError, JsonRpcErrorReason};
 use axum_jrpc::JsonRpcResponse;
+
+pub use everscale_jrpc_models as models;
 use everscale_jrpc_models::*;
 
 use self::state::Counters;
 pub use self::state::{JrpcMetrics, JrpcState};
-pub use everscale_jrpc_models as models;
 
 mod state;
 
@@ -86,13 +87,14 @@ impl JrpcServer {
     ) -> Result<impl Future<Output = ()> + Send + 'static> {
         self.state.initialize(engine).await?;
 
-        let service = tower::ServiceBuilder::new().layer(Extension(self.state));
+        let service = tower::ServiceBuilder::new();
         #[cfg(feature = "compression")]
         let service = service.layer(tower_http::compression::CompressionLayer::new().gzip(true));
 
         let router = axum::Router::new()
             .route(&self.route, post(jrpc_router))
-            .layer(service);
+            .layer(service)
+            .with_state(self.state);
 
         let future = axum::Server::try_bind(&listen_address)?
             .http2_adaptive_window(true)
@@ -104,7 +106,7 @@ impl JrpcServer {
 }
 
 async fn jrpc_router(
-    Extension(ctx): Extension<Arc<JrpcState>>,
+    State(ctx): State<Arc<JrpcState>>,
     req: axum_jrpc::JsonRpcExtractor,
 ) -> axum_jrpc::JrpcResult {
     let counters = ctx.counters();
