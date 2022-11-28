@@ -411,29 +411,30 @@ impl JrpcConnection {
             .post(self.endpoint.as_str())
             .json(&JrpcRequest { method, params });
 
-        #[derive(Debug, Deserialize)]
-        struct JsonRpcResponse<T> {
-            result: JsonRpcAnswer<T>,
+        #[derive(Serialize, Debug, Deserialize, PartialEq, Eq)]
+        /// A JSON-RPC response.
+        pub struct JsonRpcResponse {
+            #[serde(flatten)]
+            pub result: JsonRpcAnswer,
         }
 
-        #[derive(Debug, Deserialize)]
-        #[serde(untagged)]
-        enum JsonRpcAnswer<T> {
-            Result(T),
+        #[derive(Serialize, Debug, Deserialize, PartialEq, Eq)]
+        #[serde(rename_all = "lowercase")]
+        /// JsonRpc [response object](https://www.jsonrpc.org/specification#response_object)
+        pub enum JsonRpcAnswer {
+            Result(serde_json::Value),
             Error(JsonRpcError),
         }
 
-        #[derive(Debug, Deserialize)]
-        struct JsonRpcError {
-            code: i32,
-            message: String,
+        #[derive(Serialize, Debug, Deserialize, PartialEq, Eq)]
+        pub struct JsonRpcError {
+            pub code: i32,
+            pub message: String,
         }
 
-        // let res = req.send().await?.json::<JsonRpcRepsonse>().await?;
-        // Ok(res)
         let JsonRpcResponse { result } = req.send().await?.json().await?;
         match result {
-            JsonRpcAnswer::Result(result) => Ok(result),
+            JsonRpcAnswer::Result(result) => Ok(serde_json::from_value(result)?),
             JsonRpcAnswer::Error(e) => {
                 Err(JrpcClientError::ErrorResponse(e.code, e.message).into())
             }

@@ -5,11 +5,12 @@
 //!
 //! use anyhow::Result;
 //! use everscale_jrpc_server::*;
-//!
+//! use async_trait::async_trait;
 //! struct ExampleSubscriber {
 //!     jrpc_state: Arc<JrpcState>,
 //! }
 //!
+//! #[async_trait]
 //! impl ton_indexer::Subscriber for ExampleSubscriber {
 //!     async fn process_block(&self, ctx: ton_indexer::ProcessBlockContext<'_>) -> Result<()> {
 //!         if let Some(shard_state) = ctx.shard_state_stuff() {
