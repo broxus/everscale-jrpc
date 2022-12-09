@@ -1,19 +1,22 @@
 #![deny(clippy::dbg_macro)]
-use std::cmp::Ordering;
+
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use everscale_jrpc_models::*;
 use futures::StreamExt;
 use nekoton::transport::models::ExistingContract;
 use nekoton::utils::SimpleClock;
-use nekoton_utils::serde_address;
+use nekoton_utils::{serde_address, serde_hex_array};
 use parking_lot::RwLock;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use ton_block::{Account, Deserializable, Message, MsgAddressInt, Transaction};
+use ton_block::{
+    Account, Deserializable, GetRepresentationHash, Message, MsgAddressInt, Transaction,
+};
+
+use everscale_jrpc_models::*;
 
 #[derive(Clone)]
 pub struct JrpcClient {
@@ -118,28 +121,20 @@ impl JrpcClient {
     }
 
     pub async fn send_message(&self, message: Message, options: SendOptions) -> Result<SendStatus> {
-        let dst = message
+        message
             .dst()
             .context("Only inbound external messages are allowed")?;
-        let initial_state = self
-            .get_contract_state(&dst)
-            .await
-            .context("Failed to get dst state")?;
-
-        log::debug!(
-            "Initial state. Contract exists: {}",
-            initial_state.is_some()
-        );
+        let message_hash = *message.hash()?.as_slice();
 
         self.broadcast_message(message).await?;
-        log::debug!("Message broadcasted");
+        log::info!("Message broadcasted");
 
         let start = std::time::Instant::now();
         loop {
             tokio::time::sleep(options.poll_interval).await;
 
-            let state = self.get_contract_state(&dst).await;
-            let state = match (options.error_action, state) {
+            let tx = self.get_dst_transaction(&message_hash).await;
+            let tx = match (options.error_action, tx) {
                 (TransportErrorAction::Poll, Err(e)) => {
                     log::error!("Error while polling for message: {e:?}. Continue polling");
                     continue;
@@ -150,13 +145,17 @@ impl JrpcClient {
                 (_, Ok(res)) => res,
             };
 
-            if state.partial_cmp(&initial_state) == Some(Ordering::Greater) {
-                return Ok(SendStatus::Confirmed);
+            match tx {
+                Some(tx) => {
+                    return Ok(SendStatus::Confirmed(tx));
+                }
+                None => {
+                    log::debug!("Message not confirmed yet");
+                    if start.elapsed() > options.ttl {
+                        return Ok(SendStatus::Expired);
+                    }
+                }
             }
-            if start.elapsed() > options.ttl {
-                return Ok(SendStatus::Expired);
-            }
-            log::debug!("Message not confirmed yet");
         }
     }
 
@@ -197,6 +196,25 @@ impl JrpcClient {
             ton_executor::BlockchainConfig::with_config(params).context("Invalid config")?;
 
         Ok(config)
+    }
+
+    pub async fn get_dst_transaction(&self, message_hash: &[u8]) -> Result<Option<Transaction>> {
+        #[derive(Debug, Clone, Serialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        pub struct GetDstTransactionRequest {
+            #[serde(with = "serde_hex_array")]
+            pub message_hash: [u8; 32],
+        }
+
+        let message_hash = message_hash.try_into().context("Invalid message hash")?;
+        let req = GetDstTransactionRequest { message_hash };
+        let result: Vec<u8> = match self.request("getDstTransaction", req).await? {
+            Some(s) => base64::decode::<String>(s)?,
+            None => return Ok(None),
+        };
+        let result = Transaction::construct_from_bytes(&mut result.as_slice())?;
+
+        Ok(Some(result))
     }
 
     pub async fn get_transactions(
@@ -312,9 +330,9 @@ pub enum TransportErrorAction {
     Return,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SendStatus {
-    Confirmed,
+    Confirmed(Transaction),
     Expired,
 }
 
@@ -558,6 +576,20 @@ mod test {
         )
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn get_dst_transaction() {
+        let pr = get_client().await;
+        let tx = pr
+            .get_dst_transaction(
+                &hex::decode("40172727c17aa9ad0dd11c10e822226a7d22cc1e41f8c5d35b7f5614d8a12533")
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(tx.lt, 33247841000007);
     }
 
     async fn get_client() -> JrpcClient {

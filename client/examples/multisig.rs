@@ -2,12 +2,12 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use ed25519_dalek::Signer;
-use everscale_jrpc_client::{JrpcClientOptions, SendOptions, TransportErrorAction};
+use everscale_jrpc_client::{JrpcClientOptions, SendOptions, SendStatus, TransportErrorAction};
 use nekoton::core::models::Expiration;
 use nekoton::core::ton_wallet::multisig::prepare_transfer;
 use nekoton::core::ton_wallet::{Gift, MultisigType, TransferAction, WalletType};
 use nekoton::crypto::MnemonicType;
-use ton_block::MsgAddressInt;
+use ton_block::{GetRepresentationHash, MsgAddressInt};
 
 #[tokio::main]
 async fn main() {
@@ -74,5 +74,12 @@ async fn main() {
         .send_message(message, send_options)
         .await
         .expect("failed to send message");
-    println!("status: {:?}", status);
+    match status {
+        SendStatus::Confirmed(tx) => {
+            println!("tx: {}", tx.hash().unwrap().to_hex_string());
+        }
+        SendStatus::Expired => {
+            println!("Message expired");
+        }
+    }
 }
