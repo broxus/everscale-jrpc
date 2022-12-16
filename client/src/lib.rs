@@ -1,5 +1,7 @@
-#![deny(clippy::dbg_macro)]
+#![warn(clippy::dbg_macro)]
+#![allow(clippy::large_enum_variant)]
 
+use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,6 +23,7 @@ use everscale_jrpc_models::*;
 #[derive(Clone)]
 pub struct JrpcClient {
     state: Arc<State>,
+    is_capable_of_message_tracking: bool,
 }
 
 impl JrpcClient {
@@ -43,7 +46,7 @@ impl JrpcClient {
         endpoints: I,
         options: JrpcClientOptions,
     ) -> Result<Self> {
-        let client = Self {
+        let mut client = Self {
             state: Arc::new(State {
                 endpoints: endpoints
                     .into_iter()
@@ -51,6 +54,7 @@ impl JrpcClient {
                     .collect(),
                 live_endpoints: Default::default(),
             }),
+            is_capable_of_message_tracking: true,
         };
 
         let state = client.state.clone();
@@ -68,6 +72,13 @@ impl JrpcClient {
                 live = state.update_endpoints().await;
             }
         });
+
+        for endpoint in &client.state.endpoints {
+            if !endpoint.method_is_supported("getDstTransaction").await? {
+                client.is_capable_of_message_tracking = false;
+                break;
+            }
+        }
 
         Ok(client)
     }
@@ -120,7 +131,62 @@ impl JrpcClient {
         self.request("sendMessage", req).await
     }
 
+    /// Works with any jrpc node, but not as reliable as `send_message`.
+    /// You should use `send_message` if possible.
+    pub async fn send_message_unrelaible(
+        &self,
+        message: Message,
+        options: SendOptions,
+    ) -> Result<SendStatus> {
+        let dst = &message
+            .dst()
+            .context("Only inbound external messages are allowed")?;
+
+        let initial_state = self
+            .get_contract_state(dst)
+            .await
+            .context("Failed to get dst state")?;
+
+        log::debug!(
+            "Initial state. Contract exists: {}",
+            initial_state.is_some()
+        );
+
+        self.broadcast_message(message).await?;
+        log::debug!("Message broadcasted");
+
+        let start = std::time::Instant::now();
+        loop {
+            tokio::time::sleep(options.poll_interval).await;
+
+            let state = self.get_contract_state(dst).await;
+            let state = match (options.error_action, state) {
+                (TransportErrorAction::Poll, Err(e)) => {
+                    log::error!("Error while polling for message: {e:?}. Continue polling");
+                    continue;
+                }
+                (TransportErrorAction::Return, Err(e)) => {
+                    return Err(e);
+                }
+                (_, Ok(res)) => res,
+            };
+
+            if state.partial_cmp(&initial_state) == Some(Ordering::Greater) {
+                return Ok(SendStatus::LikelyConfirmed);
+            }
+            if start.elapsed() > options.ttl {
+                return Ok(SendStatus::Expired);
+            }
+            log::debug!("Message not confirmed yet");
+        }
+    }
+
+    /// NOTE: This method won't work on regular jrpc endpoint without database.
     pub async fn send_message(&self, message: Message, options: SendOptions) -> Result<SendStatus> {
+        anyhow::ensure!(self.is_capable_of_message_tracking,
+        "One of your endpoints doesn't support message tracking (it's a light node). Use `send_message_unreliable` instead or change endpoints"
+        );
+
         message
             .dst()
             .context("Only inbound external messages are allowed")?;
@@ -212,7 +278,7 @@ impl JrpcClient {
             Some(s) => base64::decode::<String>(s)?,
             None => return Ok(None),
         };
-        let result = Transaction::construct_from_bytes(&mut result.as_slice())?;
+        let result = Transaction::construct_from_bytes(result.as_slice())?;
 
         Ok(Some(result))
     }
@@ -261,10 +327,10 @@ impl JrpcClient {
     }
 }
 
-fn decode_raw_transaction(boc: &str) -> anyhow::Result<Transaction> {
+fn decode_raw_transaction(boc: &str) -> Result<Transaction> {
     let bytes = base64::decode(boc)?;
     let cell = ton_types::deserialize_tree_of_cells(&mut bytes.as_slice())?;
-    let data = ton_block::Transaction::construct_from(&mut cell.into())?;
+    let data = Transaction::construct_from(&mut cell.into())?;
     Ok(data)
 }
 
@@ -332,6 +398,7 @@ pub enum TransportErrorAction {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SendStatus {
+    LikelyConfirmed,
     Confirmed(Transaction),
     Expired,
 }
@@ -402,53 +469,10 @@ impl JrpcConnection {
         T: Serialize,
         for<'de> D: Deserialize<'de>,
     {
-        #[derive(Debug, Clone)]
-        struct JrpcRequest<'a, T> {
-            method: &'a str,
-            params: T,
-        }
-
-        impl<T: Serialize> Serialize for JrpcRequest<'_, T> {
-            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-            where
-                S: serde::ser::Serializer,
-            {
-                use serde::ser::SerializeStruct;
-
-                let mut s = serializer.serialize_struct("JrpcRequest", 4)?;
-                s.serialize_field("jsonrpc", "2.0")?;
-                s.serialize_field("id", &0)?;
-                s.serialize_field("method", self.method)?;
-                s.serialize_field("params", &self.params)?;
-                s.end()
-            }
-        }
-
         let req = self
             .client
             .post(self.endpoint.as_str())
             .json(&JrpcRequest { method, params });
-
-        #[derive(Serialize, Debug, Deserialize, PartialEq, Eq)]
-        /// A JSON-RPC response.
-        pub struct JsonRpcResponse {
-            #[serde(flatten)]
-            pub result: JsonRpcAnswer,
-        }
-
-        #[derive(Serialize, Debug, Deserialize, PartialEq, Eq)]
-        #[serde(rename_all = "lowercase")]
-        /// JsonRpc [response object](https://www.jsonrpc.org/specification#response_object)
-        pub enum JsonRpcAnswer {
-            Result(serde_json::Value),
-            Error(JsonRpcError),
-        }
-
-        #[derive(Serialize, Debug, Deserialize, PartialEq, Eq)]
-        pub struct JsonRpcError {
-            pub code: i32,
-            pub message: String,
-        }
 
         let JsonRpcResponse { result } = req.send().await?.json().await?;
         match result {
@@ -467,6 +491,29 @@ impl JrpcConnection {
             .await
             .is_ok()
     }
+
+    async fn method_is_supported(&self, method: &str) -> Result<bool> {
+        let req = self
+            .client
+            .post(self.endpoint.as_str())
+            .json(&JrpcRequest { method, params: () });
+
+        let JsonRpcResponse { result } = req.send().await?.json().await?;
+        let res = match result {
+            JsonRpcAnswer::Result(_) => true,
+            JsonRpcAnswer::Error(e) => {
+                if e.code == -32601 {
+                    false
+                } else if e.code == -32602 {
+                    true // method is supported, but params are invalid
+                } else {
+                    anyhow::bail!("Unexpected error: {}. Code: {}", e.message, e.code);
+                }
+            }
+        };
+
+        Ok(res)
+    }
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -475,6 +522,49 @@ enum JrpcClientError {
     NoEndpointsAvailable,
     #[error("Error response ({0}): {1}")]
     ErrorResponse(i32, String),
+}
+
+#[derive(Debug, Clone)]
+struct JrpcRequest<'a, T> {
+    method: &'a str,
+    params: T,
+}
+
+impl<T: Serialize> Serialize for JrpcRequest<'_, T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+
+        let mut s = serializer.serialize_struct("JrpcRequest", 4)?;
+        s.serialize_field("jsonrpc", "2.0")?;
+        s.serialize_field("id", &0)?;
+        s.serialize_field("method", self.method)?;
+        s.serialize_field("params", &self.params)?;
+        s.end()
+    }
+}
+
+#[derive(Serialize, Debug, Deserialize, PartialEq, Eq)]
+/// A JSON-RPC response.
+pub struct JsonRpcResponse {
+    #[serde(flatten)]
+    pub result: JsonRpcAnswer,
+}
+
+#[derive(Serialize, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+/// JsonRpc [response object](https://www.jsonrpc.org/specification#response_object)
+pub enum JsonRpcAnswer {
+    Result(serde_json::Value),
+    Error(JsonRpcError),
+}
+
+#[derive(Serialize, Debug, Deserialize, PartialEq, Eq)]
+pub struct JsonRpcError {
+    pub code: i32,
+    pub message: String,
 }
 
 #[cfg(test)]
@@ -603,5 +693,27 @@ mod test {
         .await
         .unwrap();
         pr
+    }
+
+    #[test]
+    fn test_serde() {
+        let err = r#"
+        {
+	        "jsonrpc": "2.0",
+	        "error": {
+	        	"code": -32601,
+	        	"message": "Method `getContractState1` not found",
+	        	"data": null
+	        },
+	        "id": 1
+        }"#;
+
+        let resp: JsonRpcResponse = serde_json::from_str(err).unwrap();
+        match resp.result {
+            JsonRpcAnswer::Error(e) => {
+                assert_eq!(e.code, -32601);
+            }
+            _ => panic!("expected error"),
+        }
     }
 }

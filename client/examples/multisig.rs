@@ -81,5 +81,6 @@ async fn main() {
         SendStatus::Expired => {
             println!("Message expired");
         }
+        _ => { /* this method doesn't return other statuses */ }
     }
 }
