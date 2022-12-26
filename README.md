@@ -17,10 +17,11 @@ API.
 
 ## Methods
 
-### `getLatestKeyBlock` - retrieves the latest key block from a node. Key blocks
+### `getLatestKeyBlock`
 
-are a type of block in a blockchain that contain important information, such as
-the state of the network and the current validator set.
+This methos is used to retrieve the latest key block from the Everscale. Key
+blocks are a type of block in a blockchain that contain important information,
+such as the state of the network and the current validator set.
 
 To call the getLatestKeyBlock method using JSON-RPC, the client must send a
 request to the server in the following format:
@@ -125,13 +126,14 @@ print(response.json()["result"])
 
   </details>
 
-### `getContractState` - retrieves the current state of a contract stored at a
+### `getContractState`
 
-specific address in the Everscale blockchain. The method takes a single
-parameter, the contract address, and returns information about the contract's
-account, timings, and last transaction ID.
+This method is used to retrieve the state of a contract at a specific address in
+the Everscale blockchain. The method takes a single parameter, the contract
+address, and returns information about the contract's account, timings, and last
+transaction ID.
 
-To call the getContractState method using JSON-RPC, you will need to send a
+To call the `getContractState` method using JSON-RPC, you will need to send a
 request to the server in the following format:
 
 ```
@@ -220,8 +222,9 @@ print(response.json())
   ```
   </details>
 
-### `getAccountsByCodeHash` - retrieves a list of accounts that have a specific code
+### `getAccountsByCodeHash`
 
+This method is used to retrieve a list of accounts that have a specific code
 hash. The method takes two parameters: a code hash and a limit on the number of
 accounts to retrieve. The method also takes an optional third parameter, a
 continuation token, which can be used to retrieve additional accounts beyond the
@@ -342,8 +345,9 @@ print(result["result"])
 
   </details>
 
-### `getTransactionsList` - retrieves a list of transactions for a specific account.
+### `getTransactionsList`
 
+This method is used to retrieve a list of transactions for a specific account.
 To call this method, you will need to send a JSON-RPC request to the server with
 the following structure:
 
@@ -543,9 +547,10 @@ await getAllTransactions(
 
   </details>
 
-### `getTransaction` - retrieves a single transaction with a given transaction ID.
+### `getTransaction`
 
-This method is needed in cases where the user wants to retrieve a specific
+This method is used to retrieve a single transaction with a given transaction
+ID. This method is needed in cases where the user wants to retrieve a specific
 transaction and has its transaction ID.
 
 To call this method, the following JSON object should be composed and sent to
@@ -640,8 +645,9 @@ result = response.json() print(result)
 
   </details>
 
-### `getDstTransaction` - retrieves a transaction that was created after processing
+### `getDstTransaction`
 
+This method is used to retrieve a transaction that was created after processing
 the inbound message. The message hash parameter is a 32-byte array that uniquely
 identifies the inbound message.
 
@@ -741,12 +747,14 @@ result = response.json() print(result)
 
   </details>
 
-### `sendMessage` - sends a message within the Everscale blockchain. The message can
+### `sendMessage`
 
-be of type internal, external, or event, and includes a header with information
-about the source and destination addresses and the type of message. This method
-is typically called by a smart contract or non-blockchain application to
-initiate communication with another smart contract or external application.
+This method is used to send a message within the Everscale blockchain. The
+message can be of type internal, external, or event, and includes a header with
+information about the source and destination addresses and the type of message.
+This method is typically called by a smart contract or non-blockchain
+application to initiate communication with another smart contract or external
+application.
 
 To call the sendMessage method, you will need to compose a JSON-RPC request and
 send it to the server. The JSON-RPC request should have the following structure:
