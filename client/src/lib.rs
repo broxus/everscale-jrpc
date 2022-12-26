@@ -1,8 +1,9 @@
 #![warn(clippy::dbg_macro)]
 #![allow(clippy::large_enum_variant)]
 
-use std::cmp::Ordering;
 use std::collections::HashSet;
+use std::fmt::Formatter;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -19,10 +20,11 @@ use ton_block::{
 };
 
 use everscale_jrpc_models::*;
+use itertools::Itertools;
 
 #[derive(Clone)]
 pub struct JrpcClient {
-    state: Arc<State>,
+    state: Arc<RpcState>,
     is_capable_of_message_tracking: bool,
 }
 
@@ -32,12 +34,47 @@ impl JrpcClient {
         endpoints: I,
         options: JrpcClientOptions,
     ) -> Result<Self> {
-        let client = reqwest::ClientBuilder::new()
-            .gzip(true)
+        let client = reqwest::Client::builder()
             .timeout(options.request_timeout)
+            .tcp_keepalive(Duration::from_secs(60))
+            .http2_adaptive_window(true)
+            .http2_keep_alive_interval(Duration::from_secs(60))
+            .http2_keep_alive_timeout(Duration::from_secs(1))
+            .http2_keep_alive_while_idle(true)
+            .gzip(false)
             .build()?;
 
-        Self::with_client(client, endpoints, options).await
+        let client = Self {
+            state: Arc::new(RpcState {
+                endpoints: endpoints
+                    .into_iter()
+                    .map(|e| JrpcConnection::new(e.to_string(), client.clone()))
+                    .collect(),
+                live_endpoints: Default::default(),
+            }),
+            is_capable_of_message_tracking: false,
+        };
+
+        let state = client.state.clone();
+        let mut live = state.update_endpoints().await;
+
+        tokio::spawn(async move {
+            loop {
+                let sleep_time = if live != 0 {
+                    options.probe_interval
+                } else {
+                    options.aggressive_poll_interval
+                };
+
+                tokio::time::sleep(sleep_time).await;
+                live = state.update_endpoints().await;
+                if live == 0 {
+                    tracing::warn!("All RPC endpoints are down");
+                }
+            }
+        });
+
+        Ok(client)
     }
 
     /// [endpoints] full URLs of the RPC endpoints.
@@ -47,7 +84,7 @@ impl JrpcClient {
         options: JrpcClientOptions,
     ) -> Result<Self> {
         let mut client = Self {
-            state: Arc::new(State {
+            state: Arc::new(RpcState {
                 endpoints: endpoints
                     .into_iter()
                     .map(|e| JrpcConnection::new(e.to_string(), client.clone()))
@@ -147,13 +184,13 @@ impl JrpcClient {
             .await
             .context("Failed to get dst state")?;
 
-        log::debug!(
+        tracing::debug!(
             "Initial state. Contract exists: {}",
             initial_state.is_some()
         );
 
         self.broadcast_message(message).await?;
-        log::debug!("Message broadcasted");
+        tracing::debug!("Message broadcasted");
 
         let start = std::time::Instant::now();
         loop {
@@ -162,7 +199,7 @@ impl JrpcClient {
             let state = self.get_contract_state(dst).await;
             let state = match (options.error_action, state) {
                 (TransportErrorAction::Poll, Err(e)) => {
-                    log::error!("Error while polling for message: {e:?}. Continue polling");
+                    tracing::error!("Error while polling for message: {e:?}. Continue polling");
                     continue;
                 }
                 (TransportErrorAction::Return, Err(e)) => {
@@ -171,13 +208,13 @@ impl JrpcClient {
                 (_, Ok(res)) => res,
             };
 
-            if state.partial_cmp(&initial_state) == Some(Ordering::Greater) {
+            if state.partial_cmp(&initial_state) == Some(std::cmp::Ordering::Greater) {
                 return Ok(SendStatus::LikelyConfirmed);
             }
             if start.elapsed() > options.ttl {
                 return Ok(SendStatus::Expired);
             }
-            log::debug!("Message not confirmed yet");
+            tracing::debug!("Message not confirmed yet");
         }
     }
 
@@ -193,7 +230,7 @@ impl JrpcClient {
         let message_hash = *message.hash()?.as_slice();
 
         self.broadcast_message(message).await?;
-        log::info!("Message broadcasted");
+        tracing::info!("Message broadcasted");
 
         let start = std::time::Instant::now();
         loop {
@@ -202,7 +239,7 @@ impl JrpcClient {
             let tx = self.get_dst_transaction(&message_hash).await;
             let tx = match (options.error_action, tx) {
                 (TransportErrorAction::Poll, Err(e)) => {
-                    log::error!("Error while polling for message: {e:?}. Continue polling");
+                    tracing::error!("Error while polling for message: {e:?}. Continue polling");
                     continue;
                 }
                 (TransportErrorAction::Return, Err(e)) => {
@@ -216,7 +253,7 @@ impl JrpcClient {
                     return Ok(SendStatus::Confirmed(tx));
                 }
                 None => {
-                    log::debug!("Message not confirmed yet");
+                    tracing::debug!("Message not confirmed yet");
                     if start.elapsed() > options.ttl {
                         return Ok(SendStatus::Expired);
                     }
@@ -323,7 +360,23 @@ impl JrpcClient {
             None => return Err(JrpcClientError::NoEndpointsAvailable.into()),
         };
 
-        client.request(method, params).await
+        let request = JrpcRequest { method, params };
+
+        let response = match client.request(request).await {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::error!("Error while sending request to endpoint: {e:?}");
+                self.state.remove_endpoint(&client.endpoint);
+                return Err(e.into());
+            }
+        };
+
+        match response.result {
+            JsonRpcAnswer::Result(result) => Ok(serde_json::from_value(result)?),
+            JsonRpcAnswer::Error(e) => {
+                Err(JrpcClientError::ErrorResponse(e.code, e.message).into())
+            }
+        }
     }
 }
 
@@ -403,12 +456,12 @@ pub enum SendStatus {
     Expired,
 }
 
-struct State {
+struct RpcState {
     endpoints: Vec<JrpcConnection>,
     live_endpoints: RwLock<Vec<JrpcConnection>>,
 }
 
-impl State {
+impl RpcState {
     fn get_client(&self) -> Option<JrpcConnection> {
         use rand::prelude::SliceRandom;
 
@@ -417,10 +470,9 @@ impl State {
     }
 
     async fn update_endpoints(&self) -> usize {
-        // to preserve order of endpoints within round-robin
-        let mut futures = futures::stream::FuturesOrdered::new();
+        let mut futures = futures::stream::FuturesUnordered::new();
         for endpoint in &self.endpoints {
-            futures.push_back(async move { endpoint.is_alive().await.then(|| endpoint.clone()) });
+            futures.push(async move { endpoint.is_alive().await.then(|| endpoint.clone()) });
         }
 
         let mut new_endpoints = Vec::with_capacity(self.endpoints.len());
@@ -435,25 +487,34 @@ impl State {
             HashSet::from_iter(old_endpoints.iter().map(|e| e.endpoint.as_str()));
 
         if old_endpoints_ids != new_endpoints_ids {
-            log::warn!(
-                "New endpoints: {}",
-                new_endpoints
-                    .iter()
-                    .map(|e| e.endpoint.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
+            let sorted_endpoints: Vec<_> = new_endpoints_ids.iter().sorted().collect();
+            tracing::warn!(endpoints = ?sorted_endpoints, "Endpoints updated");
         }
 
         *old_endpoints = new_endpoints;
         old_endpoints.len()
     }
+
+    fn remove_endpoint(&self, endpoint: &str) {
+        self.live_endpoints
+            .write()
+            .retain(|c| c.endpoint.as_ref() != endpoint);
+
+        tracing::warn!(endpoint, "Removed endpoint");
+    }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct JrpcConnection {
     endpoint: Arc<String>,
     client: reqwest::Client,
+    was_dead: Arc<AtomicBool>,
+}
+
+impl std::fmt::Display for JrpcConnection {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.endpoint)
+    }
 }
 
 impl JrpcConnection {
@@ -461,35 +522,87 @@ impl JrpcConnection {
         JrpcConnection {
             endpoint: Arc::new(endpoint),
             client,
+            was_dead: Arc::new(AtomicBool::new(false)),
         }
     }
 
-    async fn request<'a, T, D>(&self, method: &'a str, params: T) -> Result<D>
-    where
-        T: Serialize,
-        for<'de> D: Deserialize<'de>,
-    {
-        let req = self
-            .client
-            .post(self.endpoint.as_str())
-            .json(&JrpcRequest { method, params });
+    async fn request<T: Serialize>(&self, request: JrpcRequest<'_, T>) -> Result<JsonRpcResponse> {
+        let req = self.client.post(self.endpoint.as_str()).json(&request);
+        let res = req.send().await?.json::<JsonRpcResponse>().await?;
+        Ok(res)
+    }
 
-        let JsonRpcResponse { result } = req.send().await?.json().await?;
-        match result {
-            JsonRpcAnswer::Result(result) => Ok(serde_json::from_value(result)?),
-            JsonRpcAnswer::Error(e) => {
-                Err(JrpcClientError::ErrorResponse(e.code, e.message).into())
-            }
-        }
+    fn update_was_dead(&self, is_dead: bool) {
+        self.was_dead.store(is_dead, Ordering::Release);
     }
 
     async fn is_alive(&self) -> bool {
-        #[derive(Deserialize)]
-        struct AnyResponse {}
+        let is_alive = self.is_alive_inner().await;
+        self.update_was_dead(!is_alive);
 
-        self.request::<_, AnyResponse>("getLatestKeyBlock", ())
+        is_alive
+    }
+
+    async fn is_alive_inner(&self) -> bool {
+        let result = match self
+            .request(JrpcRequest {
+                method: "getTimings",
+                params: (),
+            })
             .await
-            .is_ok()
+        {
+            Ok(a) => a,
+            Err(e) => {
+                // general error, link is dead, so no need to check other branch
+                if !self.was_dead.load(Ordering::Acquire) {
+                    tracing::error!(endpoint = ?self.endpoint, "Dead endpoint: {e:?}");
+                    self.was_dead.store(true, Ordering::Release);
+                }
+                return false;
+            }
+        };
+
+        match result.result {
+            JsonRpcAnswer::Result(v) => {
+                let timings: Result<EngineMetrics, _> = serde_json::from_value(v);
+                if let Ok(t) = timings {
+                    let is_reliable = t.is_reliable();
+                    if !is_reliable {
+                        let EngineMetrics {
+                            last_mc_block_seqno,
+                            last_shard_client_mc_block_seqno,
+                            mc_time_diff,
+                            shard_client_time_diff,
+                            ..
+                        } = t;
+                        tracing::warn!(last_mc_block_seqno,last_shard_client_mc_block_seqno,mc_time_diff,shard_client_time_diff, endpoint = ?self.endpoint, "Endpoint is not reliable" );
+                    }
+
+                    return is_reliable;
+                }
+            }
+            JsonRpcAnswer::Error(e) => {
+                if e.code != -32601 {
+                    tracing::error!(endpoint = ?self.endpoint, "Dead endpoint");
+                    return false;
+                }
+            }
+        }
+
+        // falback to keyblock request
+        match self
+            .request(JrpcRequest {
+                method: "getLatestKeyBlock",
+                params: (),
+            })
+            .await
+        {
+            Ok(res) => matches!(res.result, JsonRpcAnswer::Result(_)),
+            Err(e) => {
+                tracing::error!(endpoint = self.endpoint.as_str(), "Dead endpoint: {e:?}");
+                false
+            }
+        }
     }
 
     async fn method_is_supported(&self, method: &str) -> Result<bool> {
@@ -576,12 +689,10 @@ mod test {
 
     #[tokio::test]
     async fn test() {
-        env_logger::Builder::new()
-            .filter_level(log::LevelFilter::Info)
-            .init();
+        tracing_subscriber::fmt::init();
 
         let rpc = [
-            // "http://127.0.0.1:8081",
+            "http://127.0.0.1:8081",
             "http://34.78.198.249:8081/rpc",
             "https://jrpc.everwallet.net/rpc",
         ]
@@ -604,7 +715,7 @@ mod test {
                 .request::<_, serde_json::Value>("getLatestKeyBlock", ())
                 .await
                 .unwrap();
-            log::info!("response is ok: {response:?}");
+            tracing::info!("response is ok: {response:?}");
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
@@ -684,7 +795,10 @@ mod test {
 
     async fn get_client() -> JrpcClient {
         let pr = JrpcClient::new(
-            ["https://jrpc.everwallet.net/rpc".parse().unwrap()],
+            [
+                "https://jrpc.everwallet.net/rpc".parse().unwrap(),
+                "http://127.0.0.1:8081".parse().unwrap(),
+            ],
             JrpcClientOptions {
                 probe_interval: Duration::from_secs(10),
                 ..Default::default()

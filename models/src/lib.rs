@@ -1,6 +1,12 @@
 use nekoton_utils::*;
 use serde::{Deserialize, Serialize};
 
+const MC_ACCEPTABLE_TIME_DIFF: u64 = 120;
+const SC_ACCEPTABLE_TIME_DIFF: u64 = 120;
+const ACCEPTABLE_BLOCKS_DIFF: u32 = 10;
+
+const ACCEPTABLE_NODE_BLOCK_INSERT_TIME: u64 = 240;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetContractStateRequest {
     /// Address as string
@@ -50,11 +56,28 @@ pub struct StatusResponse {
     pub ready: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, Eq, PartialEq)]
 pub struct EngineMetrics {
     pub last_mc_block_seqno: u32,
     pub last_shard_client_mc_block_seqno: u32,
     pub last_mc_utime: u32,
     pub mc_time_diff: i64,
     pub shard_client_time_diff: i64,
+}
+
+impl EngineMetrics {
+    pub fn is_reliable(&self) -> bool {
+        // just booted up
+        if self == &Self::default() {
+            return false;
+        }
+
+        let acceptable_time = (now_sec_u64() - ACCEPTABLE_NODE_BLOCK_INSERT_TIME) as u32;
+
+        self.mc_time_diff.unsigned_abs() < MC_ACCEPTABLE_TIME_DIFF
+            && self.shard_client_time_diff.unsigned_abs() < SC_ACCEPTABLE_TIME_DIFF
+            && self.last_mc_block_seqno - self.last_shard_client_mc_block_seqno
+                < ACCEPTABLE_BLOCKS_DIFF
+            && self.last_mc_utime > acceptable_time
+    }
 }
