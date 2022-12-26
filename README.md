@@ -141,7 +141,7 @@ request to the server in the following format:
   "jsonrpc": "2.0",
   "method": "getContractState",
   "params": {
-    "address": "contract_address"
+    "address": <address>
   },
   "id": 1
 }
@@ -157,8 +157,21 @@ The server will return a JSON-RPC response with the following format:
 
 {
   "jsonrpc": "2.0",
-  "result": "{account: 'te6ccgI...//R', lastTransactionId: {…}, timings: {…}, type: 'exists'}",
-  "id": 1
+  "result": "
+    {
+      "account": <encoded_base64>,
+      "lastTransactionId": {
+        "hash": <hex_encoded>,
+        "isExact": <bool>,
+        "lt": <timestamp>
+      },
+      timings: {
+        "genLt": <logical_time>,
+        "genUtime": <timestamp>
+      },
+      type: <exists | notExists>
+    }",
+  "id": <number>
 }
 
 ```
@@ -173,7 +186,7 @@ const request = {
   jsonrpc: "2.0",
   method: "getContractState",
   params: {
-    "address": "-1:3333333333333333333333333333333333333333333333333333333333333333
+    "address": "-1:3333333333333333333333333333333333333333333333333333333333333333"
   },
   id: 1,
 };
@@ -239,7 +252,7 @@ a request to the server in the following format:
   "jsonrpc": "2.0",
   "method": "getAccountsByCodeHash",
   "params": {
-    "codeHash": "contract_address"
+    "codeHash": <hex_encoded>
   },
   "id": 1
 }
@@ -356,11 +369,11 @@ the following structure:
   "jsonrpc": "2.0",
   "method": "getTransactionsList",
   "params": {
-    "account": "-1:3333333333333333333333333333333333333333333333333333333333333333",
-    "limit": 10,
-    "last_transaction_lt": 1234567890
+    "account": <address>,
+    "limit": <number>,
+    "last_transaction_lt": Option<logical_time>
   },
-  "id": 1
+  "id": <number>
 }
 
 ```
@@ -381,8 +394,8 @@ The server will return a JSON-RPC response with the following format:
 
 {
   "jsonrpc": "2.0",
-  "result": "<hex encoded raw transaction []>",
-  "id": 1
+  "result": <base64 []>,
+  "id": <number>
 }
 
 ```
@@ -392,13 +405,13 @@ The server will return a JSON-RPC response with the following format:
 
 ```
 curl -X POST -H "Content-Type: application/json" -d '{
-"jsonrpc": "2.0",
-"method": "getTransactionsList",
-"params": {
-  "account": "-1:3333333333333333333333333333333333333333333333333333333333333333",
-  "limit": 10,
-},
-"id": 1
+  "jsonrpc": "2.0",
+  "method": "getTransactionsList",
+  "params": {
+    "account": "-1:3333333333333333333333333333333333333333333333333333333333333333",
+    "limit": 10
+  },
+  "id": 1
 }' https://jrpc.everwallet.net/rpc
 
 ```
@@ -561,9 +574,9 @@ the server using a POST request:
   "jsonrpc": "2.0",
   "method": "getTransaction",
   "params": {
-    "id": "7b5ad058f9ddba0ea4c60ccd185b4b061e2968bc371ec14f7fc41550ef81d146"
+    "id": <hex_encoded>
   },
-  "id": 1
+  "id": <number>
 }
 ```
 
@@ -574,8 +587,8 @@ The server will return a JSON-RPC response with the following format:
 ```
 {
   "jsonrpc": "2.0",
-  "result": "<hex encoded raw transaction>",
-  "id": 1
+  "result": <base64>,
+  "id": <number>
 }
 
 ```
@@ -659,8 +672,8 @@ with the following parameters:
 {
   jsonrpc: "2.0",
   method: "getDstTransaction",
-  params: { messageHash: "<hex encoded message hash>" },
-  id: 1,
+  params: { "messageHash": <hex_encoded> },
+  id: <number>,
 }
 
 
@@ -672,8 +685,8 @@ The server will return a JSON-RPC response with the following format:
 
 {
   "jsonrpc":"2.0",
-  "result": "<hex encoded raw transaction>",
-  "id": 1
+  "result": <base64>,
+  "id": <number>
 }
 
 ```
@@ -771,7 +784,7 @@ send it to the server. The JSON-RPC request should have the following structure:
           "body": Option<slice_data>,
           "body_to_ref": Option<bool>,
           "nit_to_ref": Option<bool>, }
-    }, "id": <request_id> }
+    }, "id": <number> }
 
 ```
 
@@ -790,8 +803,8 @@ The server will return a JSON-RPC response with the following format:
 
 {
   "jsonrpc": "2.0",
-  "result": "<hex encoded raw transaction>",
-  "id": 1
+  "result": "<base64>",
+  "id": <number>
 }
 
 ```
