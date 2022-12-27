@@ -230,9 +230,11 @@ print(response.json())
 
   <details>
     <summary>Result:</summary>
-  ```
-  {account: 'te6ccgICA9kAAQAAvacAAAJ7n+ZmZmZmZmZmZmZmZmZm…9AAS9AAB+gLLH8v/ye1UACDtRND0BPQE9AT6ANMf0//R', lastTransactionId: {…}, timings: {…}, type: 'exists'}
-  ```
+
+```
+{account: 'te6ccgICA9kAAQAAvacAAAJ7n+ZmZmZmZmZmZmZmZmZm…9AAS9AAB+gLLH8v/ye1UACDtRND0BPQE9AT6ANMf0//R', lastTransactionId: {…}, timings: {…}, type: 'exists'}
+```
+
   </details>
 
 ### `getAccountsByCodeHash`
