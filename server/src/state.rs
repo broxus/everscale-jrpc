@@ -147,39 +147,44 @@ impl JrpcState {
             .ok_or(QueryError::NotReady)
     }
 
-    pub(crate) fn get_contract_state(
+    pub fn get_contract_state_raw(
+        &self,
+        account: &ton_block::MsgAddressInt,
+    ) -> Result<Option<ShardAccount>> {
+        let is_masterchain = account.is_masterchain();
+        let account = account.address().get_bytestring_on_stack(0);
+        let account = ton_types::UInt256::from_slice(account.as_slice());
+
+        if is_masterchain {
+            let state = self.masterchain_accounts_cache.read();
+            state.as_ref().ok_or(QueryError::NotReady)?.get(&account)
+        } else {
+            let cache = self.shard_accounts_cache.read();
+            let mut state = Ok(None);
+
+            let mut has_account_shard = false;
+            for (shard_ident, shard_accounts) in cache.iter() {
+                if !contains_account(shard_ident, &account) {
+                    continue;
+                }
+
+                has_account_shard = true;
+                state = shard_accounts.get(&account)
+            }
+
+            if !has_account_shard {
+                return Err(QueryError::NotReady.into());
+            }
+
+            state
+        }
+    }
+
+    pub fn get_contract_state(
         &self,
         account: &ton_block::MsgAddressInt,
     ) -> QueryResult<serde_json::Value> {
-        let state = {
-            let is_masterchain = account.is_masterchain();
-            let account = account.address().get_bytestring_on_stack(0);
-            let account = ton_types::UInt256::from_slice(account.as_slice());
-
-            if is_masterchain {
-                let state = self.masterchain_accounts_cache.read();
-                state.as_ref().ok_or(QueryError::NotReady)?.get(&account)
-            } else {
-                let cache = self.shard_accounts_cache.read();
-                let mut state = Ok(None);
-
-                let mut has_account_shard = false;
-                for (shard_ident, shard_accounts) in cache.iter() {
-                    if !contains_account(shard_ident, &account) {
-                        continue;
-                    }
-
-                    has_account_shard = true;
-                    state = shard_accounts.get(&account)
-                }
-
-                if !has_account_shard {
-                    return Err(QueryError::NotReady);
-                }
-
-                state
-            }
-        };
+        let state = self.get_contract_state_raw(account);
 
         let state = match state {
             Ok(Some(state)) => state,
@@ -292,7 +297,7 @@ pub struct JrpcMetrics {
     pub errors: u64,
 }
 
-pub(crate) struct ShardAccount {
+pub struct ShardAccount {
     pub data: ton_types::Cell,
     pub last_transaction_id: nekoton_abi::LastTransactionId,
     pub state_handle: Arc<RefMcStateHandle>,

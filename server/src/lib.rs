@@ -158,10 +158,10 @@ fn make_error(answer_id: i64, error: QueryError, counters: &Counters) -> JsonRpc
     JsonRpcResponse::error(answer_id, error.into())
 }
 
-type QueryResult<T> = Result<T, QueryError>;
+pub type QueryResult<T> = Result<T, QueryError>;
 
 #[derive(thiserror::Error, Clone, Debug)]
-enum QueryError {
+pub enum QueryError {
     #[error("Connection error")]
     ConnectionError,
     #[error("Failed to serialize message")]

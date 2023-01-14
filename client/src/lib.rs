@@ -367,7 +367,7 @@ impl JrpcClient {
             Err(e) => {
                 tracing::error!("Error while sending request to endpoint: {e:?}");
                 self.state.remove_endpoint(&client.endpoint);
-                return Err(e.into());
+                return Err(e);
             }
         };
 
