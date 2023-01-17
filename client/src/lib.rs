@@ -44,35 +44,7 @@ impl JrpcClient {
             .gzip(false)
             .build()?;
 
-        let client = Self {
-            state: Arc::new(RpcState {
-                endpoints: endpoints
-                    .into_iter()
-                    .map(|e| JrpcConnection::new(e.to_string(), client.clone()))
-                    .collect(),
-                live_endpoints: Default::default(),
-            }),
-            is_capable_of_message_tracking: false,
-        };
-
-        let state = client.state.clone();
-        let mut live = state.update_endpoints().await;
-
-        tokio::spawn(async move {
-            loop {
-                let sleep_time = if live != 0 {
-                    options.probe_interval
-                } else {
-                    options.aggressive_poll_interval
-                };
-
-                tokio::time::sleep(sleep_time).await;
-                live = state.update_endpoints().await;
-                if live == 0 {
-                    tracing::warn!("All RPC endpoints are down");
-                }
-            }
-        });
+        let client = Self::with_client(client, endpoints, options).await?;
 
         Ok(client)
     }
@@ -365,7 +337,7 @@ impl JrpcClient {
         let response = match client.request(request).await {
             Ok(a) => a,
             Err(e) => {
-                tracing::error!("Error while sending request to endpoint: {e:?}");
+                tracing::error!(method, "Error while sending request to endpoint: {e:?}");
                 self.state.remove_endpoint(&client.endpoint);
                 return Err(e);
             }
