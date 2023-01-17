@@ -350,7 +350,7 @@ impl JrpcClient {
         Ok(raw_transactions)
     }
 
-    async fn request<'a, T, D>(&self, method: &'a str, params: T) -> Result<D>
+    pub async fn request<'a, T, D>(&self, method: &'a str, params: T) -> Result<D>
     where
         T: Serialize,
         for<'de> D: Deserialize<'de>,
