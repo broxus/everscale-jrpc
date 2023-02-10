@@ -62,12 +62,17 @@ impl JrpcClient {
                     .map(|e| JrpcConnection::new(e.to_string(), client.clone()))
                     .collect(),
                 live_endpoints: Default::default(),
+                options: options.clone(),
             }),
             is_capable_of_message_tracking: true,
         };
 
         let state = client.state.clone();
         let mut live = state.update_endpoints().await;
+
+        if live == 0 {
+            anyhow::bail!("No live endpoints");
+        }
 
         tokio::spawn(async move {
             loop {
@@ -83,7 +88,11 @@ impl JrpcClient {
         });
 
         for endpoint in &client.state.endpoints {
-            if !endpoint.method_is_supported("getDstTransaction").await? {
+            if !endpoint
+                .method_is_supported("getDstTransaction")
+                .await
+                .unwrap_or_default()
+            {
                 client.is_capable_of_message_tracking = false;
                 break;
             }
@@ -298,7 +307,7 @@ impl JrpcClient {
         account: &MsgAddressInt,
         last_transaction_lt: Option<u64>,
     ) -> Result<Vec<ton_block::Transaction>> {
-        #[derive(Serialize)]
+        #[derive(Serialize, Clone, Copy)]
         #[serde(rename_all = "camelCase")]
         struct GetTransactionsRequest<'a> {
             #[serde(with = "serde_address")]
@@ -324,31 +333,45 @@ impl JrpcClient {
 
     pub async fn request<'a, T, D>(&self, method: &'a str, params: T) -> Result<D>
     where
-        T: Serialize,
+        T: Serialize + Clone,
         for<'de> D: Deserialize<'de>,
     {
-        let client = match self.state.get_client() {
-            Some(client) => client,
-            None => return Err(JrpcClientError::NoEndpointsAvailable.into()),
-        };
-
         let request = JrpcRequest { method, params };
+        for tries in 0..10 {
+            let client = self
+                .state
+                .get_client()
+                .await
+                .ok_or::<anyhow::Error>(JrpcClientError::NoEndpointsAvailable.into())?;
 
-        let response = match client.request(request).await {
-            Ok(a) => a,
-            Err(e) => {
-                tracing::error!(method, "Error while sending request to endpoint: {e:?}");
-                self.state.remove_endpoint(&client.endpoint);
-                return Err(e);
-            }
-        };
+            let response = match client.request(request.clone()).await {
+                Ok(a) => a,
+                Err(e) => {
+                    tracing::error!(method, "Error while sending request to endpoint: {e:?}");
+                    self.state.remove_endpoint(&client.endpoint);
 
-        match response.result {
-            JsonRpcAnswer::Result(result) => Ok(serde_json::from_value(result)?),
-            JsonRpcAnswer::Error(e) => {
-                Err(JrpcClientError::ErrorResponse(e.code, e.message).into())
+                    if tries == 10 {
+                        return Err(e);
+                    }
+                    tokio::time::sleep(self.state.options.aggressive_poll_interval).await;
+
+                    continue;
+                }
+            };
+
+            match response.result {
+                JsonRpcAnswer::Result(result) => return Ok(serde_json::from_value(result)?),
+                JsonRpcAnswer::Error(e) => {
+                    if tries == 10 {
+                        return Err(JrpcClientError::ErrorResponse(e.code, e.message).into());
+                    }
+
+                    tokio::time::sleep(self.state.options.aggressive_poll_interval).await;
+                }
             }
         }
+
+        unreachable!()
     }
 }
 
@@ -359,6 +382,7 @@ fn decode_raw_transaction(boc: &str) -> Result<Transaction> {
     Ok(data)
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JrpcClientOptions {
     /// How often the probe should update health statuses.
     ///
@@ -431,14 +455,27 @@ pub enum SendStatus {
 struct RpcState {
     endpoints: Vec<JrpcConnection>,
     live_endpoints: RwLock<Vec<JrpcConnection>>,
+    options: JrpcClientOptions,
 }
 
 impl RpcState {
-    fn get_client(&self) -> Option<JrpcConnection> {
+    async fn get_client(&self) -> Option<JrpcConnection> {
         use rand::prelude::SliceRandom;
 
-        let live_endpoints = self.live_endpoints.read();
-        live_endpoints.choose(&mut rand::thread_rng()).cloned()
+        for _ in 0..10 {
+            let client = {
+                let live_endpoints = self.live_endpoints.read();
+                live_endpoints.choose(&mut rand::thread_rng()).cloned()
+            };
+
+            if client.is_some() {
+                return client;
+            } else {
+                tokio::time::sleep(self.options.aggressive_poll_interval).await;
+            }
+        }
+
+        None
     }
 
     async fn update_endpoints(&self) -> usize {
@@ -683,10 +720,7 @@ mod test {
         .unwrap();
 
         for _ in 0..10 {
-            let response = balanced_client
-                .request::<_, serde_json::Value>("getLatestKeyBlock", ())
-                .await
-                .unwrap();
+            let response = balanced_client.get_latest_key_block().await.unwrap();
             tracing::info!("response is ok: {response:?}");
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
@@ -733,6 +767,25 @@ mod test {
         let pr = get_client().await;
 
         pr.get_latest_key_block().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_all_dead() {
+        let pr = JrpcClient::new(
+            [
+                "https://lolkek228.dead/rpc".parse().unwrap(),
+                "http://127.0.0.1:8081".parse().unwrap(),
+                "http://127.0.0.1:12333".parse().unwrap(),
+            ],
+            JrpcClientOptions {
+                probe_interval: Duration::from_secs(10),
+                ..Default::default()
+            },
+        )
+        .await
+        .is_err();
+
+        assert!(pr);
     }
 
     #[tokio::test]
