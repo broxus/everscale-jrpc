@@ -81,3 +81,10 @@ impl EngineMetrics {
             && self.last_mc_utime > acceptable_time
     }
 }
+
+#[derive(Serialize, Clone, Copy)]
+#[serde(rename_all = "camelCase")]
+pub struct GetTransactionRequest<'a> {
+    #[serde(with = "serde_hex_array")]
+    pub id: &'a [u8; 32],
+}

@@ -21,6 +21,7 @@ use ton_block::{
 
 use everscale_jrpc_models::*;
 use itertools::Itertools;
+use ton_types::UInt256;
 
 #[derive(Clone)]
 pub struct JrpcClient {
@@ -331,13 +332,32 @@ impl JrpcClient {
         Ok(raw_transactions)
     }
 
+    pub async fn get_raw_transaction(&self, tx_hash: UInt256) -> Result<Option<Transaction>> {
+        if !self.is_capable_of_message_tracking {
+            anyhow::bail!("This method is not supported by light nodes")
+        }
+        let request = GetTransactionRequest {
+            id: &tx_hash.as_slice(),
+        };
+
+        let data: Option<String> = self.request("getTransaction", request).await?;
+        let raw_transaction = match data {
+            Some(data) => decode_raw_transaction(&data)?,
+            None => return Ok(None),
+        };
+
+        Ok(Some(raw_transaction))
+    }
+
     pub async fn request<'a, T, D>(&self, method: &'a str, params: T) -> Result<D>
     where
         T: Serialize + Clone,
         for<'de> D: Deserialize<'de>,
     {
         let request = JrpcRequest { method, params };
-        for tries in 0..10 {
+        const NUM_RETRIES: usize = 10;
+
+        for tries in 0..=NUM_RETRIES {
             let client = self
                 .state
                 .get_client()
@@ -350,7 +370,7 @@ impl JrpcClient {
                     tracing::error!(method, "Error while sending request to endpoint: {e:?}");
                     self.state.remove_endpoint(&client.endpoint);
 
-                    if tries == 10 {
+                    if tries == NUM_RETRIES {
                         return Err(e);
                     }
                     tokio::time::sleep(self.state.options.aggressive_poll_interval).await;
@@ -362,7 +382,7 @@ impl JrpcClient {
             match response.result {
                 JsonRpcAnswer::Result(result) => return Ok(serde_json::from_value(result)?),
                 JsonRpcAnswer::Error(e) => {
-                    if tries == 10 {
+                    if tries == NUM_RETRIES {
                         return Err(JrpcClientError::ErrorResponse(e.code, e.message).into());
                     }
 
