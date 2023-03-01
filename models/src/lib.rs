@@ -1,5 +1,6 @@
 use nekoton_utils::*;
 use serde::{Deserialize, Serialize};
+use std::time::SystemTime;
 
 const MC_ACCEPTABLE_TIME_DIFF: u64 = 120;
 const SC_ACCEPTABLE_TIME_DIFF: u64 = 120;
@@ -80,6 +81,32 @@ impl EngineMetrics {
                 < ACCEPTABLE_BLOCKS_DIFF
             && self.last_mc_utime > acceptable_time
     }
+
+    pub fn has_state_for(&self, time: u32) -> bool {
+        let now = now();
+
+        self.last_mc_utime > time && (now - self.shard_client_time_diff as u64) > time as u64
+    }
+}
+
+fn now() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+impl PartialOrd for EngineMetrics {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for EngineMetrics {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.shard_client_time_diff, self.mc_time_diff)
+            .cmp(&(other.shard_client_time_diff, other.mc_time_diff))
+    }
 }
 
 #[derive(Serialize, Clone, Copy)]
@@ -87,4 +114,25 @@ impl EngineMetrics {
 pub struct GetTransactionRequest<'a> {
     #[serde(with = "serde_hex_array")]
     pub id: &'a [u8; 32],
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn older_than() {
+        let metrics = EngineMetrics {
+            last_mc_block_seqno: 0,
+            last_shard_client_mc_block_seqno: 0,
+            last_mc_utime: now() as u32,
+            mc_time_diff: 100,
+            shard_client_time_diff: 100,
+        };
+
+        assert!(metrics.has_state_for(0));
+        assert!(!metrics.has_state_for(now() as u32 - 1));
+        assert!(!metrics.has_state_for(now() as u32 - 99));
+        assert!(metrics.has_state_for(now() as u32 - 101));
+    }
 }

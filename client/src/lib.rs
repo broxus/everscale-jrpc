@@ -1,9 +1,10 @@
 #![warn(clippy::dbg_macro)]
 #![allow(clippy::large_enum_variant)]
 
+use std::cmp;
 use std::collections::HashSet;
 use std::fmt::Formatter;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,7 +13,7 @@ use futures::StreamExt;
 use nekoton::transport::models::ExistingContract;
 use nekoton::utils::SimpleClock;
 use nekoton_utils::{serde_address, serde_hex_array};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use ton_block::{
@@ -22,6 +23,8 @@ use ton_block::{
 use everscale_jrpc_models::*;
 use itertools::Itertools;
 use ton_types::UInt256;
+
+static ROUND_ROBIN_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Clone)]
 pub struct JrpcClient {
@@ -107,7 +110,7 @@ impl JrpcClient {
         address: &MsgAddressInt,
     ) -> Result<Option<ExistingContract>> {
         let req = GetContractStateRequestRef { address };
-        match self.request("getContractState", req).await? {
+        match self.request("getContractState", req).await?.into_inner() {
             ContractStateResponse::NotExists => Ok(None),
             ContractStateResponse::Exists {
                 account,
@@ -140,6 +143,58 @@ impl JrpcClient {
             .map(Some)
     }
 
+    /// Works like `get_contract_state`, but also checks that node has state older than [time].
+    /// If state is not fresh, returns `Err`.
+    /// This method should be used with `ChooseStrategy::TimeBased`.
+    pub async fn get_contract_state_with_time_check(
+        &self,
+        address: &MsgAddressInt,
+        time: u32,
+    ) -> Result<Option<ExistingContract>, RunError> {
+        let req = GetContractStateRequestRef { address };
+        let response = self.request("getContractState", req).await?;
+        match response.result {
+            ContractStateResponse::NotExists => {
+                response.has_state_for(time)?;
+                Ok(None)
+            }
+            ContractStateResponse::Exists {
+                account,
+                timings,
+                last_transaction_id,
+            } => Ok(Some(ExistingContract {
+                account,
+                timings,
+                last_transaction_id,
+            })),
+        }
+    }
+
+    /// Works like `run_local`, but also checks that node has fresh state.
+    pub async fn run_local_with_time_check(
+        &self,
+        address: &MsgAddressInt,
+        function: &ton_abi::Function,
+        input: &[ton_abi::Token],
+        time: u32,
+    ) -> Result<Option<nekoton::abi::ExecutionOutput>, RunError> {
+        use nekoton::abi::FunctionExt;
+
+        let state = match self
+            .get_contract_state_with_time_check(address, time)
+            .await?
+        {
+            Some(a) => a,
+            None => return Ok(None),
+        };
+
+        let result = function
+            .clone()
+            .run_local(&SimpleClock, state.account, input)
+            .map(Some)?;
+        Ok(result)
+    }
+
     pub async fn broadcast_message(&self, message: Message) -> Result<()> {
         anyhow::ensure!(
             message.is_inbound_external(),
@@ -147,7 +202,7 @@ impl JrpcClient {
         );
 
         let req = SendMessageRequest { message };
-        self.request("sendMessage", req).await
+        self.request("sendMessage", req).await.map(|x| x.result)
     }
 
     /// Works with any jrpc node, but not as reliable as `send_message`.
@@ -264,7 +319,9 @@ impl JrpcClient {
     }
 
     pub async fn get_latest_key_block(&self) -> Result<BlockResponse> {
-        self.request("getLatestKeyBlock", ()).await
+        self.request("getLatestKeyBlock", ())
+            .await
+            .map(|x| x.result)
     }
 
     pub async fn get_blockchain_config(&self) -> Result<ton_executor::BlockchainConfig> {
@@ -293,7 +350,7 @@ impl JrpcClient {
 
         let message_hash = message_hash.try_into().context("Invalid message hash")?;
         let req = GetDstTransactionRequest { message_hash };
-        let result: Vec<u8> = match self.request("getDstTransaction", req).await? {
+        let result: Vec<u8> = match self.request("getDstTransaction", req).await?.into_inner() {
             Some(s) => base64::decode::<String>(s)?,
             None => return Ok(None),
         };
@@ -323,7 +380,10 @@ impl JrpcClient {
             last_transaction_lt: last_transaction_lt.unwrap_or(0),
         };
 
-        let data: Vec<String> = self.request("getTransactionsList", request).await?;
+        let data: Vec<String> = self
+            .request("getTransactionsList", request)
+            .await?
+            .into_inner();
         let raw_transactions = data
             .into_iter()
             .map(|x| decode_raw_transaction(&x))
@@ -337,10 +397,10 @@ impl JrpcClient {
             anyhow::bail!("This method is not supported by light nodes")
         }
         let request = GetTransactionRequest {
-            id: &tx_hash.as_slice(),
+            id: tx_hash.as_slice(),
         };
 
-        let data: Option<String> = self.request("getTransaction", request).await?;
+        let data: Option<String> = self.request("getTransaction", request).await?.into_inner();
         let raw_transaction = match data {
             Some(data) => decode_raw_transaction(&data)?,
             None => return Ok(None),
@@ -349,7 +409,7 @@ impl JrpcClient {
         Ok(Some(raw_transaction))
     }
 
-    pub async fn request<'a, T, D>(&self, method: &'a str, params: T) -> Result<D>
+    pub async fn request<'a, T, D>(&self, method: &'a str, params: T) -> Result<Answer<D>>
     where
         T: Serialize + Clone,
         for<'de> D: Deserialize<'de>,
@@ -380,7 +440,12 @@ impl JrpcClient {
             };
 
             match response.result {
-                JsonRpcAnswer::Result(result) => return Ok(serde_json::from_value(result)?),
+                JsonRpcAnswer::Result(result) => {
+                    return Ok(Answer {
+                        result: serde_json::from_value(result)?,
+                        node_stats: client.get_stats(),
+                    })
+                }
                 JsonRpcAnswer::Error(e) => {
                     if tries == NUM_RETRIES {
                         return Err(JrpcClientError::ErrorResponse(e.code, e.message).into());
@@ -395,6 +460,32 @@ impl JrpcClient {
     }
 }
 
+pub struct Answer<D> {
+    result: D,
+    node_stats: Option<EngineMetrics>,
+}
+
+impl<D> Answer<D>
+where
+    for<'de> D: Deserialize<'de>,
+{
+    fn into_inner(self) -> D {
+        self.result
+    }
+
+    fn has_state_for(&self, time: u32) -> Result<(), RunError> {
+        if let Some(stats) = &self.node_stats {
+            return if stats.has_state_for(time) {
+                Ok(())
+            } else {
+                Err(RunError::NoStateForTimeStamp(time))
+            };
+        }
+        // If we don't have stats, we assume that the node is healthy
+        Ok(())
+    }
+}
+
 fn decode_raw_transaction(boc: &str) -> Result<Transaction> {
     let bytes = base64::decode(boc)?;
     let cell = ton_types::deserialize_tree_of_cells(&mut bytes.as_slice())?;
@@ -406,7 +497,7 @@ fn decode_raw_transaction(boc: &str) -> Result<Transaction> {
 pub struct JrpcClientOptions {
     /// How often the probe should update health statuses.
     ///
-    /// Default: `60 sec`
+    /// Default: `1 sec`
     pub probe_interval: Duration,
 
     /// How long to wait for a response from a node.
@@ -417,14 +508,17 @@ pub struct JrpcClientOptions {
     ///
     /// Default: `1 sec`
     pub aggressive_poll_interval: Duration,
+
+    pub choose_strategy: ChooseStrategy,
 }
 
 impl Default for JrpcClientOptions {
     fn default() -> Self {
         Self {
-            probe_interval: Duration::from_secs(60),
+            probe_interval: Duration::from_secs(1),
             request_timeout: Duration::from_secs(3),
             aggressive_poll_interval: Duration::from_secs(1),
+            choose_strategy: ChooseStrategy::Random,
         }
     }
 }
@@ -478,14 +572,39 @@ struct RpcState {
     options: JrpcClientOptions,
 }
 
-impl RpcState {
-    async fn get_client(&self) -> Option<JrpcConnection> {
+#[derive(Debug, Clone, Serialize, Deserialize, Copy)]
+pub enum ChooseStrategy {
+    Random,
+    RoundRobin,
+    /// Choose the endpoint with the lowest latency
+    TimeBased,
+}
+
+impl ChooseStrategy {
+    fn choose(&self, endpoints: &[JrpcConnection]) -> Option<JrpcConnection> {
         use rand::prelude::SliceRandom;
 
+        match self {
+            ChooseStrategy::Random => endpoints.choose(&mut rand::thread_rng()).cloned(),
+            ChooseStrategy::RoundRobin => {
+                let index = ROUND_ROBIN_COUNTER.fetch_add(1, Ordering::Release);
+
+                endpoints.get(index % endpoints.len()).cloned()
+            }
+            ChooseStrategy::TimeBased => endpoints
+                .iter()
+                .min_by(|left, right| left.cmp(right))
+                .cloned(),
+        }
+    }
+}
+
+impl RpcState {
+    async fn get_client(&self) -> Option<JrpcConnection> {
         for _ in 0..10 {
             let client = {
                 let live_endpoints = self.live_endpoints.read();
-                live_endpoints.choose(&mut rand::thread_rng()).cloned()
+                self.options.choose_strategy.choose(&live_endpoints)
             };
 
             if client.is_some() {
@@ -538,6 +657,39 @@ struct JrpcConnection {
     endpoint: Arc<String>,
     client: reqwest::Client,
     was_dead: Arc<AtomicBool>,
+    stats: Arc<Mutex<Option<EngineMetrics>>>,
+}
+
+impl PartialEq<Self> for JrpcConnection {
+    fn eq(&self, other: &Self) -> bool {
+        self.endpoint == other.endpoint
+    }
+}
+
+impl Eq for JrpcConnection {}
+
+impl PartialOrd<Self> for JrpcConnection {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl cmp::Ord for JrpcConnection {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        if self.eq(other) {
+            cmp::Ordering::Equal
+        } else {
+            let left_stats = self.get_stats();
+            let right_stats = other.get_stats();
+
+            match (left_stats, right_stats) {
+                (Some(left_stats), Some(right_stats)) => left_stats.cmp(&right_stats),
+                (None, Some(_)) => cmp::Ordering::Less,
+                (Some(_), None) => cmp::Ordering::Greater,
+                (None, None) => cmp::Ordering::Equal,
+            }
+        }
+    }
 }
 
 impl std::fmt::Display for JrpcConnection {
@@ -552,6 +704,7 @@ impl JrpcConnection {
             endpoint: Arc::new(endpoint),
             client,
             was_dead: Arc::new(AtomicBool::new(false)),
+            stats: Arc::new(Default::default()),
         }
     }
 
@@ -566,13 +719,20 @@ impl JrpcConnection {
     }
 
     async fn is_alive(&self) -> bool {
-        let is_alive = self.is_alive_inner().await;
+        let check_result = self.is_alive_inner().await;
+        let is_alive = check_result.as_bool();
         self.update_was_dead(!is_alive);
+
+        match check_result {
+            LiveCheckResult::Live(stats) => self.set_stats(Some(stats)),
+            LiveCheckResult::Dummy => {}
+            LiveCheckResult::Dead => {}
+        }
 
         is_alive
     }
 
-    async fn is_alive_inner(&self) -> bool {
+    async fn is_alive_inner(&self) -> LiveCheckResult {
         let result = match self
             .request(JrpcRequest {
                 method: "getTimings",
@@ -587,7 +747,7 @@ impl JrpcConnection {
                     tracing::error!(endpoint = ?self.endpoint, "Dead endpoint: {e:?}");
                     self.was_dead.store(true, Ordering::Release);
                 }
-                return false;
+                return LiveCheckResult::Dead;
             }
         };
 
@@ -607,13 +767,13 @@ impl JrpcConnection {
                         tracing::warn!(last_mc_block_seqno,last_shard_client_mc_block_seqno,mc_time_diff,shard_client_time_diff, endpoint = ?self.endpoint, "Endpoint is not reliable" );
                     }
 
-                    return is_reliable;
+                    return LiveCheckResult::Live(t);
                 }
             }
             JsonRpcAnswer::Error(e) => {
                 if e.code != -32601 {
                     tracing::error!(endpoint = ?self.endpoint, "Dead endpoint");
-                    return false;
+                    return LiveCheckResult::Dead;
                 }
             }
         }
@@ -626,10 +786,16 @@ impl JrpcConnection {
             })
             .await
         {
-            Ok(res) => matches!(res.result, JsonRpcAnswer::Result(_)),
+            Ok(res) => {
+                if let JsonRpcAnswer::Result(_) = res.result {
+                    LiveCheckResult::Dummy
+                } else {
+                    LiveCheckResult::Dead
+                }
+            }
             Err(e) => {
                 tracing::error!(endpoint = self.endpoint.as_str(), "Dead endpoint: {e:?}");
-                false
+                LiveCheckResult::Dead
             }
         }
     }
@@ -655,6 +821,32 @@ impl JrpcConnection {
         };
 
         Ok(res)
+    }
+
+    fn get_stats(&self) -> Option<EngineMetrics> {
+        self.stats.lock().clone()
+    }
+
+    fn set_stats(&self, stats: Option<EngineMetrics>) {
+        *self.stats.lock() = stats;
+    }
+}
+
+enum LiveCheckResult {
+    /// GetTimings request was successful
+    Live(EngineMetrics),
+    /// Keyblock request was successful, but getTimings failed
+    Dummy,
+    Dead,
+}
+
+impl LiveCheckResult {
+    fn as_bool(&self) -> bool {
+        match self {
+            LiveCheckResult::Live(metrics) => metrics.is_reliable(),
+            LiveCheckResult::Dummy => true,
+            LiveCheckResult::Dead => false,
+        }
     }
 }
 
@@ -707,6 +899,14 @@ pub enum JsonRpcAnswer {
 pub struct JsonRpcError {
     pub code: i32,
     pub message: String,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum RunError {
+    #[error(transparent)]
+    Generic(#[from] anyhow::Error),
+    #[error("No state for timestamp {0}")]
+    NoStateForTimeStamp(u32),
 }
 
 #[cfg(test)]
