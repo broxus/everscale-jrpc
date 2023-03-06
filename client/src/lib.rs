@@ -17,7 +17,8 @@ use parking_lot::{Mutex, RwLock};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use ton_block::{
-    Account, Deserializable, GetRepresentationHash, Message, MsgAddressInt, Transaction,
+    Account, CommonMsgInfo, Deserializable, GetRepresentationHash, Message, MsgAddressInt,
+    Transaction,
 };
 
 use everscale_jrpc_models::*;
@@ -195,12 +196,16 @@ impl JrpcClient {
         Ok(result)
     }
 
-    pub async fn broadcast_message(&self, message: Message) -> Result<()> {
-        anyhow::ensure!(
-            message.is_inbound_external(),
-            "Only inbound external messages are allowed"
-        );
-
+    pub async fn broadcast_message(&self, message: Message) -> Result<(), RunError> {
+        match message.header() {
+            CommonMsgInfo::IntMsgInfo(_) => {
+                return Err(RunError::NotInboundMessage("IntMsgInfo".to_string()));
+            }
+            CommonMsgInfo::ExtOutMsgInfo(_) => {
+                return Err(RunError::NotInboundMessage("ExtOutMsgInfo".to_string()));
+            }
+            CommonMsgInfo::ExtInMsgInfo(_) => {}
+        }
         let req = SendMessageRequest { message };
         self.request("sendMessage", req).await.map(|x| x.result)
     }
@@ -318,7 +323,7 @@ impl JrpcClient {
         executor.run(message)
     }
 
-    pub async fn get_latest_key_block(&self) -> Result<BlockResponse> {
+    pub async fn get_latest_key_block(&self) -> Result<BlockResponse, RunError> {
         self.request("getLatestKeyBlock", ())
             .await
             .map(|x| x.result)
@@ -409,7 +414,7 @@ impl JrpcClient {
         Ok(Some(raw_transaction))
     }
 
-    pub async fn request<'a, T, D>(&self, method: &'a str, params: T) -> Result<Answer<D>>
+    pub async fn request<'a, T, D>(&self, method: &'a str, params: T) -> Result<Answer<D>, RunError>
     where
         T: Serialize + Clone,
         for<'de> D: Deserialize<'de>,
@@ -422,7 +427,7 @@ impl JrpcClient {
                 .state
                 .get_client()
                 .await
-                .ok_or::<anyhow::Error>(JrpcClientError::NoEndpointsAvailable.into())?;
+                .ok_or::<RunError>(JrpcClientError::NoEndpointsAvailable.into())?;
 
             let response = match client.request(request.clone()).await {
                 Ok(a) => a,
@@ -431,7 +436,7 @@ impl JrpcClient {
                     self.state.remove_endpoint(&client.endpoint);
 
                     if tries == NUM_RETRIES {
-                        return Err(e);
+                        return Err(e.into());
                     }
                     tokio::time::sleep(self.state.options.aggressive_poll_interval).await;
 
@@ -851,7 +856,7 @@ impl LiveCheckResult {
 }
 
 #[derive(thiserror::Error, Debug)]
-enum JrpcClientError {
+pub enum JrpcClientError {
     #[error("No endpoints available")]
     NoEndpointsAvailable,
     #[error("Error response ({0}): {1}")]
@@ -907,6 +912,14 @@ pub enum RunError {
     Generic(#[from] anyhow::Error),
     #[error("No state for timestamp {0}")]
     NoStateForTimeStamp(u32),
+    #[error("Network error: {0}")]
+    NetworkError(#[from] reqwest::Error),
+    #[error("Jrpc error: {0}")]
+    JrpcClientError(#[from] JrpcClientError),
+    #[error("JSON error: {0}")]
+    ParseError(#[from] serde_json::Error),
+    #[error("Invalid message type: {0}")]
+    NotInboundMessage(String),
 }
 
 #[cfg(test)]
