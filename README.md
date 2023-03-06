@@ -1,3 +1,10 @@
+<p align="center">
+  <a href="https://github.com/venom-blockchain/developer-program">
+    <img src="https://raw.githubusercontent.com/venom-blockchain/developer-program/main/vf-dev-program.png" alt="Logo" width="366.8" height="146.4">
+  </a>
+</p>
+
+
 ## Everscale JRPC module
 
 Everscale-jrpc is a module that implements a subset of the JSON-RPC (JRPC)
