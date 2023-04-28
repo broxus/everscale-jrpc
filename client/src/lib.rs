@@ -494,8 +494,7 @@ where
 fn decode_raw_transaction(boc: &str) -> Result<Transaction> {
     let bytes = base64::decode(boc)?;
     let cell = ton_types::deserialize_tree_of_cells(&mut bytes.as_slice())?;
-    let data = Transaction::construct_from(&mut cell.into())?;
-    Ok(data)
+    Transaction::construct_from_cell(cell)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -52,7 +52,7 @@ impl JrpcState {
         let shard_accounts = ShardAccounts {
             accounts,
             state_handle,
-            gen_utime: block_info.gen_utime().0,
+            gen_utime: block_info.gen_utime().as_u32(),
         };
 
         if block_id.shard_id.is_masterchain() {
@@ -234,9 +234,8 @@ impl JrpcState {
         };
 
         let cells = message
-            .write_to_new_cell()
-            .map_err(|_| QueryError::FailedToSerialize)?
-            .into();
+            .serialize()
+            .map_err(|_| QueryError::FailedToSerialize)?;
 
         let serialized =
             ton_types::serialize_toc(&cells).map_err(|_| QueryError::FailedToSerialize)?;
