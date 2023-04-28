@@ -474,11 +474,11 @@ impl<D> Answer<D>
 where
     for<'de> D: Deserialize<'de>,
 {
-    fn into_inner(self) -> D {
+    pub fn into_inner(self) -> D {
         self.result
     }
 
-    fn has_state_for(&self, time: u32) -> Result<(), RunError> {
+    pub fn has_state_for(&self, time: u32) -> Result<(), RunError> {
         if let Some(stats) = &self.node_stats {
             return if stats.has_state_for(time) {
                 Ok(())
