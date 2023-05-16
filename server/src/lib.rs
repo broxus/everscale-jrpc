@@ -144,6 +144,7 @@ async fn jrpc_router(
             Ok(stats) => JsonRpcResponse::success(answer_id, stats),
             Err(e) => make_error(answer_id, e, counters),
         },
+        "capabilities" => JsonRpcResponse::success(answer_id, ctx.capabilities()),
         m => {
             counters.increase_not_found();
             req.method_not_found(m)
@@ -156,6 +157,32 @@ async fn jrpc_router(
 fn make_error(answer_id: i64, error: QueryError, counters: &Counters) -> JsonRpcResponse {
     counters.increase_errors();
     JsonRpcResponse::error(answer_id, error.into())
+}
+
+fn capabilities(with_tx_storage: bool) -> serde_json::Value {
+    let methods: &str = if with_tx_storage {
+        r#"[
+            "getLatestKeyBlock",
+            "getContractState",
+            "sendMessage",
+            "getStatus",
+            "getTimings",
+            "getTransactionsList",
+            "getTransaction",
+            "getDstTransaction",
+            "getAccountsByCodeHash"
+        ]"#
+    } else {
+        r#"[
+            "getLatestKeyBlock",
+            "getContractState",
+            "sendMessage",
+            "getStatus",
+            "getTimings"
+        ]"#
+    };
+
+    serde_json::from_str(methods).unwrap()
 }
 
 pub type QueryResult<T> = Result<T, QueryError>;
