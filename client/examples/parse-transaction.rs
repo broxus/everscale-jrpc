@@ -1,11 +1,13 @@
 use anyhow::Result;
 use everscale_jrpc_client::JrpcClientOptions;
-use tracing::log;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    env_logger::builder()
-        .filter(Some("everscale_jrpc_client"), log::LevelFilter::Debug)
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::new(
+            "everscale_jrpc_client=info",
+        ))
+        .pretty()
         .init();
     let client = everscale_jrpc_client::JrpcClient::new(
         ["https://jrpc.everwallet.net/rpc".parse().unwrap()],

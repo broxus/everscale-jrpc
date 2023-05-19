@@ -8,22 +8,38 @@ use rustc_hash::FxHashMap;
 use ton_block::{Deserializable, HashmapAugType, Serializable};
 use ton_indexer::utils::{BlockStuff, RefMcStateHandle, ShardStateStuff};
 
+use crate::capabilities;
 use everscale_jrpc_models::*;
 
 use super::{QueryError, QueryResult};
 
-#[derive(Default)]
 pub struct JrpcState {
     engine: ArcSwapWeak<ton_indexer::Engine>,
     key_block_response: ArcSwapOption<serde_json::Value>,
     masterchain_accounts_cache: RwLock<Option<ShardAccounts>>,
     shard_accounts_cache: RwLock<FxHashMap<ton_block::ShardIdent, ShardAccounts>>,
     counters: Counters,
+    capabilities: serde_json::Value,
 }
 
 impl JrpcState {
+    pub fn new(with_tx_storage: bool) -> Self {
+        JrpcState {
+            engine: Default::default(),
+            key_block_response: Default::default(),
+            masterchain_accounts_cache: Default::default(),
+            shard_accounts_cache: Default::default(),
+            counters: Default::default(),
+            capabilities: capabilities(with_tx_storage),
+        }
+    }
+
     pub fn metrics(&self) -> JrpcMetrics {
         self.counters.metrics()
+    }
+
+    pub fn capabilities(&self) -> serde_json::Value {
+        self.capabilities.clone()
     }
 
     pub fn handle_block(
