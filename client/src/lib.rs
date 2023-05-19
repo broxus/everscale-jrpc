@@ -339,8 +339,8 @@ impl JrpcClient {
 
         let params = master.config().context("Invalid config")?.clone();
 
-        let config =
-            ton_executor::BlockchainConfig::with_config(params).context("Invalid config")?;
+        let config = ton_executor::BlockchainConfig::with_config(params, block.global_id)
+            .context("Invalid config")?;
 
         Ok(config)
     }
@@ -369,7 +369,7 @@ impl JrpcClient {
         limit: u16,
         account: &MsgAddressInt,
         last_transaction_lt: Option<u64>,
-    ) -> Result<Vec<ton_block::Transaction>> {
+    ) -> Result<Vec<Transaction>> {
         #[derive(Serialize, Clone, Copy)]
         #[serde(rename_all = "camelCase")]
         struct GetTransactionsRequest<'a> {
