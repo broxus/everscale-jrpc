@@ -53,6 +53,66 @@ pub enum ContractStateResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GetTransactionsRequest {
+    #[serde(with = "serde_address")]
+    pub account: ton_block::MsgAddressInt,
+
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_optional_u64"
+    )]
+    pub last_transaction_lt: Option<u64>,
+
+    pub limit: u8,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetTransactionsRequestRef<'a> {
+    #[serde(with = "serde_address")]
+    pub account: &'a ton_block::MsgAddressInt,
+
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_optional_u64"
+    )]
+    pub last_transaction_lt: Option<u64>,
+
+    pub limit: u8,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetTransactionRequest {
+    #[serde(with = "serde_hex_array")]
+    pub id: [u8; 32],
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetTransactionRequestRef<'a> {
+    #[serde(with = "serde_hex_array")]
+    pub id: &'a [u8; 32],
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetDstTransactionRequest {
+    #[serde(with = "serde_hex_array")]
+    pub message_hash: [u8; 32],
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetDstTransactionRequestRef<'a> {
+    #[serde(with = "serde_hex_array")]
+    pub message_hash: &'a [u8; 32],
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StatusResponse {
     pub ready: bool,
 }
@@ -107,13 +167,6 @@ impl Ord for EngineMetrics {
         (self.shard_client_time_diff, self.mc_time_diff)
             .cmp(&(other.shard_client_time_diff, other.mc_time_diff))
     }
-}
-
-#[derive(Serialize, Clone, Copy)]
-#[serde(rename_all = "camelCase")]
-pub struct GetTransactionRequest<'a> {
-    #[serde(with = "serde_hex_array")]
-    pub id: &'a [u8; 32],
 }
 
 #[cfg(test)]

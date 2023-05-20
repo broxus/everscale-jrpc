@@ -1,24 +1,32 @@
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use arc_swap::{ArcSwapOption, ArcSwapWeak};
 use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
+use serde::{Deserialize, Serialize};
 use ton_block::{Deserializable, HashmapAugType, Serializable};
 use ton_indexer::utils::{BlockStuff, RefMcStateHandle, ShardStateStuff};
+use ton_types::HashmapType;
+use weedb::{rocksdb, Caches, Migrations, Semver, Table, WeeDb};
 
 use crate::capabilities;
 use everscale_jrpc_models::*;
 
 use super::{QueryError, QueryResult};
 
+mod tables;
+
+#[derive(Default)]
 pub struct JrpcState {
     engine: ArcSwapWeak<ton_indexer::Engine>,
     key_block_response: ArcSwapOption<serde_json::Value>,
     masterchain_accounts_cache: RwLock<Option<ShardAccounts>>,
     shard_accounts_cache: RwLock<FxHashMap<ton_block::ShardIdent, ShardAccounts>>,
     counters: Counters,
+    storage: Option<Storage>,
     capabilities: serde_json::Value,
 }
 
@@ -40,6 +48,20 @@ impl JrpcState {
 
     pub fn capabilities(&self) -> serde_json::Value {
         self.capabilities.clone()
+    }
+
+    pub fn handle_block_edge(&self) {
+        if let Some(storage) = &self.storage {
+            storage.update_snapshot();
+        }
+    }
+
+    pub async fn handle_full_state(&self, shard_state: &ShardStateStuff) -> Result<()> {
+        let Some(storage) = &self.storage else {
+            return Ok(())
+        };
+
+        Ok(())
     }
 
     pub fn handle_block(
@@ -116,6 +138,18 @@ impl JrpcState {
 
         if block_info.key_block() {
             self.update_key_block(block);
+        }
+
+        if let Some(storage) = &self.storage {
+            let extra = block.read_extra()?;
+            let account_blocks = extra.read_account_blocks()?;
+
+            account_blocks.iterate_with_keys(|key, value| {
+                value.transaction_iterate(p);
+
+                // TODO
+                Ok(true)
+            })?;
         }
 
         Ok(())
@@ -263,6 +297,92 @@ impl JrpcState {
             .map_err(|_| QueryError::ConnectionError)
     }
 
+    pub(crate) fn get_transactions(
+        &self,
+        account: &ton_block::MsgAddressInt,
+        last_transaction_lt: Option<u64>,
+        limit: u8,
+    ) -> Result<Vec<String>, StorageError> {
+        const MAX_LIMIT: u8 = 100;
+
+        let storage = self.get_storage()?;
+
+        if limit == 0 {
+            return Ok(Vec::new());
+        } else if limit > MAX_LIMIT {
+            return Err(StorageError::TooBigLimit);
+        }
+
+        let snapshot = storage.load_snapshot()?;
+
+        let mut key = [0u8; { tables::Transactions::KEY_LEN }];
+        extract_address(account, &mut key)?;
+        key[33..].copy_from_slice(&last_transaction_lt.unwrap_or(u64::MAX).to_be_bytes());
+
+        let mut lower_bound = Vec::with_capacity(tables::Transactions::KEY_LEN);
+        lower_bound.extend_from_slice(&key[..33]);
+        lower_bound.extend_from_slice(&[0; 8]);
+
+        let mut readopts = storage.transactions.new_read_config();
+        readopts.set_snapshot(&snapshot);
+        readopts.set_iterate_lower_bound(lower_bound);
+
+        let transactions_cf = storage.transactions.cf();
+        let mut iter = storage
+            .inner
+            .raw()
+            .raw_iterator_cf_opt(&transactions_cf, readopts);
+        iter.seek_for_prev(key);
+
+        let mut result = Vec::with_capacity(std::cmp::min(8, limit) as usize);
+
+        for _ in 0..limit {
+            match iter.value() {
+                Some(value) => {
+                    result.push(base64::encode(value));
+                }
+                None => {
+                    iter.status()?;
+                    break;
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    pub(crate) fn get_transaction(
+        &self,
+        tx_hash: &[u8; 32],
+    ) -> Result<Option<impl AsRef<[u8]> + '_>, StorageError> {
+        let storage = self.get_storage()?;
+
+        let Some(key) = storage.transactions_by_hash.get(tx_hash)? else {
+            return Ok(None);
+        };
+
+        match storage.transactions.get(key)? {
+            Some(value) => Ok(Some(value)),
+            None => Err(StorageError::IndexMiss),
+        }
+    }
+
+    pub(crate) fn get_dst_transaction(
+        &self,
+        in_msg_hash: &[u8; 32],
+    ) -> Result<Option<impl AsRef<[u8]> + '_>, StorageError> {
+        let storage = self.get_storage()?;
+
+        let Some(key) = storage.transactions_by_in_msg.get(in_msg_hash)? else {
+            return Ok(None);
+        };
+
+        match storage.transactions.get(key)? {
+            Some(value) => Ok(Some(value)),
+            None => Err(StorageError::IndexMiss),
+        }
+    }
+
     fn update_key_block(&self, block: &ton_block::Block) {
         match serde_json::to_value(BlockResponse {
             block: block.clone(),
@@ -272,6 +392,10 @@ impl JrpcState {
                 tracing::error!("Failed to update key block: {e:?}");
             }
         }
+    }
+
+    fn get_storage(&self) -> Result<&Storage, StorageError> {
+        self.storage.as_ref().ok_or(StorageError::Disabled)
     }
 }
 
@@ -346,6 +470,180 @@ impl ShardAccounts {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct DbOptions {
+    pub max_memory_usage: usize,
+    pub min_caches_capacity: usize,
+    pub min_compaction_memory_budget: usize,
+}
+
+impl Default for DbOptions {
+    fn default() -> Self {
+        Self {
+            max_memory_usage: 2 << 30,             // 2 GB
+            min_caches_capacity: 64 << 20,         // 64 MB
+            min_compaction_memory_budget: 1 << 30, // 1 GB
+        }
+    }
+}
+
+struct Storage {
+    transactions: Table<tables::Transactions>,
+    transactions_by_hash: Table<tables::TransactionsByHash>,
+    transactions_by_in_msg: Table<tables::TransactionsByInMsg>,
+    code_hashes: Table<tables::CodeHashes>,
+    code_hashes_by_address: Table<tables::CodeHashesByAddress>,
+
+    snapshot: ArcSwapOption<OwnedSnapshot>,
+    inner: WeeDb,
+}
+
+impl Storage {
+    const DB_VERSION: Semver = [0, 1, 0];
+
+    fn new(path: PathBuf, options: DbOptions) -> Result<Arc<Self>> {
+        let limit = match fdlimit::raise_fd_limit() {
+            // New fd limit
+            Some(limit) => limit,
+            // Current soft limit
+            None => {
+                rlimit::getrlimit(rlimit::Resource::NOFILE)
+                    .unwrap_or((256, 0))
+                    .0
+            }
+        };
+
+        let caches_capacity =
+            std::cmp::max(options.max_memory_usage / 3, options.min_caches_capacity);
+        let compaction_memory_budget = std::cmp::max(
+            options.max_memory_usage - options.max_memory_usage / 3,
+            options.min_compaction_memory_budget,
+        );
+
+        let caches = Caches::with_capacity(caches_capacity);
+
+        let inner = WeeDb::builder(path, caches)
+            .options(|opts, _| {
+                opts.set_level_compaction_dynamic_level_bytes(true);
+
+                // compression opts
+                opts.set_zstd_max_train_bytes(32 * 1024 * 1024);
+                opts.set_compression_type(rocksdb::DBCompressionType::Zstd);
+
+                // io
+                opts.set_max_open_files(limit as i32);
+
+                // logging
+                opts.set_log_level(rocksdb::LogLevel::Error);
+                opts.set_keep_log_file_num(2);
+                opts.set_recycle_log_file_num(2);
+
+                // cf
+                opts.create_if_missing(true);
+                opts.create_missing_column_families(true);
+
+                // cpu
+                opts.set_max_background_jobs(std::cmp::max((num_cpus::get() as i32) / 2, 2));
+                opts.increase_parallelism(num_cpus::get() as i32);
+
+                opts.optimize_level_style_compaction(compaction_memory_budget);
+
+                // debug
+                // opts.enable_statistics();
+                // opts.set_stats_dump_period_sec(30);
+            })
+            .with_table::<tables::Transactions>()
+            .with_table::<tables::TransactionsByHash>()
+            .with_table::<tables::TransactionsByInMsg>()
+            .with_table::<tables::CodeHashes>()
+            .with_table::<tables::CodeHashesByAddress>()
+            .build()
+            .context("Failed building db")?;
+
+        let migrations = Migrations::with_target_version(Self::DB_VERSION);
+        inner
+            .apply(migrations)
+            .context("Failed to apply migrations")?;
+
+        Ok(Arc::new(Self {
+            transactions: inner.instantiate_table(),
+            transactions_by_hash: inner.instantiate_table(),
+            transactions_by_in_msg: inner.instantiate_table(),
+            code_hashes: inner.instantiate_table(),
+            code_hashes_by_address: inner.instantiate_table(),
+            snapshot: Default::default(),
+            inner,
+        }))
+    }
+
+    fn load_snapshot(&self) -> Result<Arc<OwnedSnapshot>, StorageError> {
+        self.snapshot
+            .load_full()
+            .ok_or(StorageError::SnapshotNotFound)
+    }
+
+    fn update_snapshot(&self) {
+        let snapshot = Arc::new(OwnedSnapshot::new(self.inner.raw().clone()));
+        self.snapshot.store(Some(snapshot));
+    }
+}
+
+impl Drop for Storage {
+    fn drop(&mut self) {
+        self.snapshot.store(None);
+        self.inner.raw().cancel_all_background_work(true);
+    }
+}
+
+struct OwnedSnapshot {
+    inner: rocksdb::Snapshot<'static>,
+    db: Arc<rocksdb::DB>,
+}
+
+impl OwnedSnapshot {
+    fn new(db: Arc<rocksdb::DB>) -> Self {
+        use rocksdb::Snapshot;
+
+        unsafe fn extend_lifetime<'a>(r: Snapshot<'a>) -> Snapshot<'static> {
+            std::mem::transmute::<Snapshot<'a>, Snapshot<'static>>(r)
+        }
+
+        // SAFETY: `Snapshot` requires the same lifetime as `rocksdb::DB` but
+        // `tokio::task::spawn` requires 'static. This object ensures
+        // that `rocksdb::DB` object lifetime will exceed the lifetime of the snapshot
+        let inner = unsafe { extend_lifetime(db.as_ref().snapshot()) };
+        Self { inner, db }
+    }
+}
+
+impl std::ops::Deref for OwnedSnapshot {
+    type Target = rocksdb::Snapshot<'static>;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+fn extract_address(
+    address: &ton_block::MsgAddressInt,
+    target: &mut [u8],
+) -> Result<(), StorageError> {
+    if let ton_block::MsgAddressInt::AddrStd(address) = address {
+        let account = address.address.get_bytestring_on_stack(0);
+        let account = account.as_ref();
+
+        if target.len() >= 33 && account.len() == 32 {
+            target[0] = address.workchain_id as u8;
+            target[1..33].copy_from_slice(account);
+            return Ok(());
+        }
+    }
+
+    Err(StorageError::InvalidAddress)
+}
+
 fn contains_account(shard: &ton_block::ShardIdent, account: &ton_types::UInt256) -> bool {
     let shard_prefix = shard.shard_prefix_with_tag();
     if shard_prefix == ton_block::SHARD_FULL {
@@ -377,6 +675,22 @@ fn account_prefix(account: &ton_types::UInt256, len: usize) -> u64 {
     }
 
     value
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum StorageError {
+    #[error("extended API disabled")]
+    Disabled,
+    #[error("invalid address")]
+    InvalidAddress,
+    #[error("too big limit")]
+    TooBigLimit,
+    #[error("DB error")]
+    DbError(#[from] rocksdb::Error),
+    #[error("snapshot not found")]
+    SnapshotNotFound,
+    #[error("index miss")]
+    IndexMiss,
 }
 
 #[cfg(test)]

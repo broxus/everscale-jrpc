@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0"
-arc-swap = { version = "1.5", features = ["weak"] }
+arc-swap = { version = "1.6", features = ["weak"] }
 axum = { version = "0.6.0", features = ["http2"] }
 axum-jrpc = "0.3.2"
 
@@ -14,6 +14,7 @@ everscale-jrpc-models = { path = "../models" }
 nekoton-abi = { git = "https://github.com/broxus/nekoton.git", default-features = false }
 parking_lot = { version = "0.12.0", features = ["hardware-lock-elision"] }
 rustc-hash = "1.1"
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "1.0"
 
@@ -22,8 +23,14 @@ ton_block = { git = "https://github.com/broxus/ton-labs-block.git" }
 ton_types = { git = "https://github.com/broxus/ton-labs-types.git" }
 
 tower = "0.4.12"
-tower-http = { version = "0.3.0", features = ["compression-gzip"], optional = true }
+tower-http = { version = "0.4.0", features = ["compression-gzip"], optional = true }
 tracing = "0.1.37"
+
+base64 = { version = "0.13", optional = true }
+fdlimit = { version = "0.2.1", optional = true }
+num_cpus = { version = "1.13.1", optional = true }
+rlimit = { version = "0.9.1", optional = true }
+weedb = { version = "0.1", features = ["zstd", "lz4", "jemalloc"], optional = true }
 
 [dev-dependencies]
 hex = "0.4"
@@ -31,5 +38,6 @@ tokio = { version = "1", features = ["rt"] }
 async-trait = "0.1.58"
 
 [features]
-default = ["compression"]
+default = ["compression", "full-api"]
 compression = ["dep:tower-http"]
+full-api = ["dep:base64", "dep:fdlimit", "dep:num_cpus", "dep:rlimit", "dep:weedb"]

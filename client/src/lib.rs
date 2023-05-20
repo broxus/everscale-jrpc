@@ -12,7 +12,6 @@ use anyhow::{Context, Result};
 use futures::StreamExt;
 use nekoton::transport::models::ExistingContract;
 use nekoton::utils::SimpleClock;
-use nekoton_utils::{serde_address, serde_hex_array};
 use parking_lot::{Mutex, RwLock};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -346,13 +345,6 @@ impl JrpcClient {
     }
 
     pub async fn get_dst_transaction(&self, message_hash: &[u8]) -> Result<Option<Transaction>> {
-        #[derive(Debug, Clone, Serialize)]
-        #[serde(rename_all = "camelCase", deny_unknown_fields)]
-        pub struct GetDstTransactionRequest {
-            #[serde(with = "serde_hex_array")]
-            pub message_hash: [u8; 32],
-        }
-
         let message_hash = message_hash.try_into().context("Invalid message hash")?;
         let req = GetDstTransactionRequest { message_hash };
         let result: Vec<u8> = match self.request("getDstTransaction", req).await?.into_inner() {
@@ -369,20 +361,11 @@ impl JrpcClient {
         limit: u16,
         account: &MsgAddressInt,
         last_transaction_lt: Option<u64>,
-    ) -> Result<Vec<Transaction>> {
-        #[derive(Serialize, Clone, Copy)]
-        #[serde(rename_all = "camelCase")]
-        struct GetTransactionsRequest<'a> {
-            #[serde(with = "serde_address")]
-            account: &'a MsgAddressInt,
-            limit: u16,
-            last_transaction_lt: u64,
-        }
-
-        let request = GetTransactionsRequest {
+    ) -> Result<Vec<ton_block::Transaction>> {
+        let request = GetTransactionsRequestRef {
             account,
             limit,
-            last_transaction_lt: last_transaction_lt.unwrap_or(0),
+            last_transaction_lt,
         };
 
         let data: Vec<String> = self
@@ -401,7 +384,7 @@ impl JrpcClient {
         if !self.is_capable_of_message_tracking {
             anyhow::bail!("This method is not supported by light nodes")
         }
-        let request = GetTransactionRequest {
+        let request = GetTransactionRequestRef {
             id: tx_hash.as_slice(),
         };
 

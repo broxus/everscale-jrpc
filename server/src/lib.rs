@@ -121,15 +121,45 @@ async fn jrpc_router(
             Err(e) => make_error(answer_id, e, counters),
         },
         "getContractState" => {
-            let request: GetContractStateRequest = req.parse_params()?;
-            match ctx.get_contract_state(&request.address) {
+            let req: GetContractStateRequest = req.parse_params()?;
+            match ctx.get_contract_state(&req.address) {
                 Ok(state) => JsonRpcResponse::success(answer_id, state),
                 Err(e) => make_error(answer_id, e, counters),
             }
         }
+        "getTransactions" => {
+            let req: GetTransactionsRequest = req.parse_params()?;
+            match ctx.get_transactions(&req.account, req.last_transaction_lt, req.limit) {
+                Ok(txs) => JsonRpcResponse::success(answer_id, txs),
+                Err(e) => {
+                    tracing::error!(error = ?e, method = "getTransactions");
+                    make_error(answer_id, QueryError::StorageError, counters)
+                }
+            }
+        }
+        "getTransaction" => {
+            let req: GetTransactionRequest = req.parse_params()?;
+            match ctx.get_transaction(&req.id) {
+                Ok(tx) => JsonRpcResponse::success(answer_id, tx.map(base64::encode)),
+                Err(e) => {
+                    tracing::error!(error = ?e, method = "getTransaction");
+                    make_error(answer_id, QueryError::StorageError, counters)
+                }
+            }
+        }
+        "getDstTransaction" => {
+            let req: GetDstTransactionRequest = req.parse_params()?;
+            match ctx.get_transaction(&req.message_hash) {
+                Ok(tx) => JsonRpcResponse::success(answer_id, tx.map(base64::encode)),
+                Err(e) => {
+                    tracing::error!(error = ?e, method = "getDstTransaction");
+                    make_error(answer_id, QueryError::StorageError, counters)
+                }
+            }
+        }
         "sendMessage" => {
-            let request: SendMessageRequest = req.parse_params()?;
-            match ctx.send_message(request.message).await {
+            let req: SendMessageRequest = req.parse_params()?;
+            match ctx.send_message(req.message).await {
                 Ok(_) => JsonRpcResponse::success(answer_id, ()),
                 Err(e) => make_error(answer_id, e, counters),
             }
@@ -197,6 +227,8 @@ pub enum QueryError {
     InvalidAccountState,
     #[error("External message expected")]
     ExternalMessageExpected,
+    #[error("Storage error")]
+    StorageError,
     #[error("Not ready")]
     NotReady,
 }
@@ -208,6 +240,7 @@ impl QueryError {
             QueryError::FailedToSerialize => -32002,
             QueryError::InvalidAccountState => -32004,
             QueryError::ExternalMessageExpected => -32005,
+            QueryError::StorageError => -32006,
             QueryError::NotReady => -32007,
         }
     }

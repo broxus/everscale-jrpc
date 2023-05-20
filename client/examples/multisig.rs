@@ -11,12 +11,10 @@ use ton_block::{GetRepresentationHash, MsgAddressInt};
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::new(
-            "everscale_jrpc_client=info",
-        ))
-        .pretty()
+    tracing_subscriber::fmt::SubscriberBuilder::default()
+        .with_max_level(tracing::Level::DEBUG)
         .init();
+
     let seed = std::env::args().nth(1).unwrap();
     let to = std::env::args().nth(2).unwrap();
 

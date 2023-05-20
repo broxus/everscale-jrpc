@@ -3,12 +3,10 @@ use everscale_jrpc_client::JrpcClientOptions;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::new(
-            "everscale_jrpc_client=info",
-        ))
-        .pretty()
+    tracing_subscriber::fmt::SubscriberBuilder::default()
+        .with_max_level(tracing::Level::DEBUG)
         .init();
+
     let client = everscale_jrpc_client::JrpcClient::new(
         ["https://jrpc.everwallet.net/rpc".parse().unwrap()],
         JrpcClientOptions::default(),

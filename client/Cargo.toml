@@ -33,8 +33,7 @@ hex = "0.4.3"
 [dev-dependencies]
 ed25519-dalek = "1.0.1"
 hex = "0.4.3"
-tracing-subscriber = { version = "0.3",features= ["env-filter"] }
-
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [features]
 default = ["log"]
