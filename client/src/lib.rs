@@ -358,11 +358,11 @@ impl JrpcClient {
 
     pub async fn get_transactions(
         &self,
-        limit: u16,
+        limit: u8,
         account: &MsgAddressInt,
         last_transaction_lt: Option<u64>,
     ) -> Result<Vec<ton_block::Transaction>> {
-        let request = GetTransactionsRequestRef {
+        let request = GetTransactionsListRequestRef {
             account,
             limit,
             last_transaction_lt,

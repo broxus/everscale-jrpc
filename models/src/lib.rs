@@ -53,7 +53,7 @@ pub enum ContractStateResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GetTransactionsRequest {
+pub struct GetTransactionsListRequest {
     #[serde(with = "serde_address")]
     pub account: ton_block::MsgAddressInt,
 
@@ -69,7 +69,7 @@ pub struct GetTransactionsRequest {
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GetTransactionsRequestRef<'a> {
+pub struct GetTransactionsListRequestRef<'a> {
     #[serde(with = "serde_address")]
     pub account: &'a ton_block::MsgAddressInt,
 

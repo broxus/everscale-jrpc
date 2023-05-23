@@ -12,7 +12,6 @@ use ton_indexer::utils::{BlockStuff, RefMcStateHandle, ShardStateStuff};
 use ton_types::HashmapType;
 use weedb::{rocksdb, Caches, Migrations, Semver, Table, WeeDb};
 
-use crate::capabilities;
 use everscale_jrpc_models::*;
 
 use super::{QueryError, QueryResult};
@@ -27,27 +26,23 @@ pub struct JrpcState {
     shard_accounts_cache: RwLock<FxHashMap<ton_block::ShardIdent, ShardAccounts>>,
     counters: Counters,
     storage: Option<Storage>,
-    capabilities: serde_json::Value,
 }
 
 impl JrpcState {
-    pub fn new(with_tx_storage: bool) -> Self {
-        JrpcState {
+    pub fn new(storage: Option<JrpcStorageOptions>) -> Result<Self> {
+        let storage = storage.map(Storage::new).transpose()?;
+        Ok(Self {
             engine: Default::default(),
             key_block_response: Default::default(),
             masterchain_accounts_cache: Default::default(),
             shard_accounts_cache: Default::default(),
             counters: Default::default(),
-            capabilities: capabilities(with_tx_storage),
-        }
+            storage,
+        })
     }
 
     pub fn metrics(&self) -> JrpcMetrics {
         self.counters.metrics()
-    }
-
-    pub fn capabilities(&self) -> serde_json::Value {
-        self.capabilities.clone()
     }
 
     pub fn handle_block_edge(&self) {
@@ -56,10 +51,12 @@ impl JrpcState {
         }
     }
 
-    pub async fn handle_full_state(&self, shard_state: &ShardStateStuff) -> Result<()> {
-        let Some(storage) = &self.storage else {
-            return Ok(())
-        };
+    pub async fn handle_full_state(&self, _shard_state: &ShardStateStuff) -> Result<()> {
+        // let Some(storage) = &self.storage else {
+        //     return Ok(())
+        // };
+
+        // TODO: fill code hashes
 
         Ok(())
     }
@@ -141,15 +138,76 @@ impl JrpcState {
         }
 
         if let Some(storage) = &self.storage {
+            let workchain = block_id.shard().workchain_id();
+            let Ok(workchain) = i8::try_from(workchain) else {
+                return Ok(());
+            };
+
             let extra = block.read_extra()?;
             let account_blocks = extra.read_account_blocks()?;
 
-            account_blocks.iterate_with_keys(|key, value| {
-                value.transaction_iterate(p);
+            // Prepare column families
+            let mut write_batch = rocksdb::WriteBatch::default();
+            let tx_cf = &storage.transactions.cf();
+            let tx_by_hash_cf = &storage.transactions_by_hash.cf();
+            let tx_by_in_msg_cf = &storage.transactions_by_in_msg.cf();
 
-                // TODO
+            // Prepare buffer for full tx id
+            let mut tx_full_id = [0u8; { tables::Transactions::KEY_LEN }];
+            tx_full_id[0] = workchain as u8;
+
+            // Iterate all changed accounts in block
+            let mut non_empty_batch = false;
+            account_blocks.iterate_with_keys(|account, value| {
+                non_empty_batch |= true;
+
+                // Fill account address in full transaction buffer
+                tx_full_id[1..33].copy_from_slice(account.as_slice());
+
+                // Flag to update code hash
+                let mut has_special_actions = false;
+
+                // Process account transactions
+                value.transactions().iterate_slices(|_, mut value| {
+                    let tx_cell = value.checked_drain_reference()?;
+                    let tx_hash = tx_cell.repr_hash();
+                    let tx_data = ton_types::serialize_toc(&tx_cell)?;
+                    let tx = ton_block::Transaction::construct_from_cell(tx_cell)?;
+
+                    tx_full_id[33..].copy_from_slice(&tx.lt.to_be_bytes());
+
+                    // Update code hash
+                    let descr = tx.read_description()?;
+                    if let Some(action_phase) = descr.action_phase_ref() {
+                        has_special_actions |= action_phase.spec_actions != 0;
+                    }
+
+                    // Write tx data and indices
+                    write_batch.put_cf(tx_cf, tx_full_id.as_slice(), tx_data);
+                    write_batch.put_cf(tx_by_hash_cf, tx_hash.as_slice(), tx_full_id.as_slice());
+                    if let Some(in_msg_cell) = tx.in_msg_cell() {
+                        write_batch.put_cf(
+                            tx_by_in_msg_cf,
+                            in_msg_cell.repr_hash().as_slice(),
+                            tx_full_id.as_slice(),
+                        );
+                    }
+
+                    Ok(true)
+                })?;
+
+                // TODO: Update account code hash if `has_special_actions`
+
                 Ok(true)
             })?;
+
+            if non_empty_batch {
+                storage
+                    .inner
+                    .raw()
+                    .write_opt(write_batch, storage.transactions.write_config())
+                    .context("Failed to update JRPC storage")?;
+            }
         }
 
         Ok(())
@@ -340,6 +398,7 @@ impl JrpcState {
             match iter.value() {
                 Some(value) => {
                     result.push(base64::encode(value));
+                    iter.prev();
                 }
                 None => {
                     iter.status()?;
@@ -471,6 +530,14 @@ impl ShardAccounts {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JrpcStorageOptions {
+    pub db_path: PathBuf,
+    #[serde(default)]
+    pub db_options: DbOptions,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct DbOptions {
     pub max_memory_usage: usize,
@@ -502,7 +569,12 @@ struct Storage {
 impl Storage {
     const DB_VERSION: Semver = [0, 1, 0];
 
-    fn new(path: PathBuf, options: DbOptions) -> Result<Arc<Self>> {
+    fn new(options: JrpcStorageOptions) -> Result<Self> {
+        let JrpcStorageOptions {
+            db_path,
+            db_options,
+        } = options;
+
         let limit = match fdlimit::raise_fd_limit() {
             // New fd limit
             Some(limit) => limit,
@@ -514,16 +586,18 @@ impl Storage {
             }
         };
 
-        let caches_capacity =
-            std::cmp::max(options.max_memory_usage / 3, options.min_caches_capacity);
+        let caches_capacity = std::cmp::max(
+            db_options.max_memory_usage / 3,
+            db_options.min_caches_capacity,
+        );
         let compaction_memory_budget = std::cmp::max(
-            options.max_memory_usage - options.max_memory_usage / 3,
-            options.min_compaction_memory_budget,
+            db_options.max_memory_usage - db_options.max_memory_usage / 3,
+            db_options.min_compaction_memory_budget,
         );
 
         let caches = Caches::with_capacity(caches_capacity);
 
-        let inner = WeeDb::builder(path, caches)
+        let inner = WeeDb::builder(db_path, caches)
             .options(|opts, _| {
                 opts.set_level_compaction_dynamic_level_bytes(true);
 
@@ -566,7 +640,7 @@ impl Storage {
             .apply(migrations)
             .context("Failed to apply migrations")?;
 
-        Ok(Arc::new(Self {
+        Ok(Self {
             transactions: inner.instantiate_table(),
             transactions_by_hash: inner.instantiate_table(),
             transactions_by_in_msg: inner.instantiate_table(),
@@ -574,7 +648,7 @@ impl Storage {
             code_hashes_by_address: inner.instantiate_table(),
             snapshot: Default::default(),
             inner,
-        }))
+        })
     }
 
     fn load_snapshot(&self) -> Result<Arc<OwnedSnapshot>, StorageError> {
@@ -598,7 +672,7 @@ impl Drop for Storage {
 
 struct OwnedSnapshot {
     inner: rocksdb::Snapshot<'static>,
-    db: Arc<rocksdb::DB>,
+    _db: Arc<rocksdb::DB>,
 }
 
 impl OwnedSnapshot {
@@ -613,7 +687,7 @@ impl OwnedSnapshot {
         // `tokio::task::spawn` requires 'static. This object ensures
         // that `rocksdb::DB` object lifetime will exceed the lifetime of the snapshot
         let inner = unsafe { extend_lifetime(db.as_ref().snapshot()) };
-        Self { inner, db }
+        Self { inner, _db: db }
     }
 }
 

@@ -25,7 +25,7 @@
 //!     global_config: ton_indexer::GlobalConfig,
 //!     listen_address: std::net::SocketAddr,
 //! ) -> Result<()> {
-//!     let jrpc_state = Arc::new(JrpcState::default());
+//!     let jrpc_state = Arc::new(JrpcState::new(None));
 //!     let subscriber: Arc<dyn ton_indexer::Subscriber> = Arc::new(ExampleSubscriber {
 //!         jrpc_state: jrpc_state.clone(),
 //!     });
@@ -50,7 +50,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use axum::extract::State;
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum_jrpc::error::{JsonRpcError, JsonRpcErrorReason};
 use axum_jrpc::JsonRpcResponse;
 
@@ -58,26 +58,17 @@ pub use everscale_jrpc_models as models;
 use everscale_jrpc_models::*;
 
 use self::state::Counters;
-pub use self::state::{JrpcMetrics, JrpcState};
+pub use self::state::{JrpcMetrics, JrpcState, JrpcStorageOptions};
 
 mod state;
 
 pub struct JrpcServer {
-    route: String,
     state: Arc<JrpcState>,
 }
 
 impl JrpcServer {
     pub fn with_state(state: Arc<JrpcState>) -> Self {
-        Self {
-            route: "/rpc".to_string(),
-            state,
-        }
-    }
-
-    pub fn with_route(mut self, route: &str) -> Self {
-        self.route = route.to_owned();
-        self
+        Self { state }
     }
 
     /// Initializes state and returns server future
@@ -93,7 +84,9 @@ impl JrpcServer {
         let service = service.layer(tower_http::compression::CompressionLayer::new().gzip(true));
 
         let router = axum::Router::new()
-            .route(&self.route, post(jrpc_router))
+            .route("/", get(health_check))
+            .route("/", post(jrpc_router))
+            .route("/rpc", post(jrpc_router))
             .layer(service)
             .with_state(self.state);
 
@@ -104,6 +97,14 @@ impl JrpcServer {
 
         Ok(async move { future.await.unwrap() })
     }
+}
+
+async fn health_check() -> impl axum::response::IntoResponse {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system time before Unix epoch")
+        .as_millis()
+        .to_string()
 }
 
 async fn jrpc_router(
@@ -127,12 +128,16 @@ async fn jrpc_router(
                 Err(e) => make_error(answer_id, e, counters),
             }
         }
-        "getTransactions" => {
-            let req: GetTransactionsRequest = req.parse_params()?;
+        "getTransactionsList" => {
+            let now = std::time::Instant::now();
+            let req: GetTransactionsListRequest = req.parse_params()?;
             match ctx.get_transactions(&req.account, req.last_transaction_lt, req.limit) {
-                Ok(txs) => JsonRpcResponse::success(answer_id, txs),
+                Ok(txs) => {
+                    tracing::info!(elapsed_ns = now.elapsed().as_nanos());
+                    JsonRpcResponse::success(answer_id, txs)
+                }
                 Err(e) => {
-                    tracing::error!(error = ?e, method = "getTransactions");
+                    tracing::error!(error = ?e, method = "getTransactionsList");
                     make_error(answer_id, QueryError::StorageError, counters)
                 }
             }
@@ -149,7 +154,7 @@ async fn jrpc_router(
         }
         "getDstTransaction" => {
             let req: GetDstTransactionRequest = req.parse_params()?;
-            match ctx.get_transaction(&req.message_hash) {
+            match ctx.get_dst_transaction(&req.message_hash) {
                 Ok(tx) => JsonRpcResponse::success(answer_id, tx.map(base64::encode)),
                 Err(e) => {
                     tracing::error!(error = ?e, method = "getDstTransaction");
@@ -174,7 +179,6 @@ async fn jrpc_router(
             Ok(stats) => JsonRpcResponse::success(answer_id, stats),
             Err(e) => make_error(answer_id, e, counters),
         },
-        "capabilities" => JsonRpcResponse::success(answer_id, ctx.capabilities()),
         m => {
             counters.increase_not_found();
             req.method_not_found(m)
@@ -187,32 +191,6 @@ async fn jrpc_router(
 fn make_error(answer_id: i64, error: QueryError, counters: &Counters) -> JsonRpcResponse {
     counters.increase_errors();
     JsonRpcResponse::error(answer_id, error.into())
-}
-
-fn capabilities(with_tx_storage: bool) -> serde_json::Value {
-    let methods: &str = if with_tx_storage {
-        r#"[
-            "getLatestKeyBlock",
-            "getContractState",
-            "sendMessage",
-            "getStatus",
-            "getTimings",
-            "getTransactionsList",
-            "getTransaction",
-            "getDstTransaction",
-            "getAccountsByCodeHash"
-        ]"#
-    } else {
-        r#"[
-            "getLatestKeyBlock",
-            "getContractState",
-            "sendMessage",
-            "getStatus",
-            "getTimings"
-        ]"#
-    };
-
-    serde_json::from_str(methods).unwrap()
 }
 
 pub type QueryResult<T> = Result<T, QueryError>;
