@@ -123,13 +123,15 @@ impl JrpcState {
 
     pub(crate) async fn initialize(&self, engine: &Arc<ton_indexer::Engine>) -> Result<()> {
         self.engine.store(Arc::downgrade(engine));
-        let last_key_block = engine.load_last_key_block().await?;
-        let key_block_response = serde_json::to_value(BlockResponse {
-            block: last_key_block.block().clone(),
-        })?;
 
-        self.key_block_response
-            .compare_and_swap(&None::<Arc<_>>, Some(Arc::new(key_block_response)));
+        if let Ok(last_key_block) = engine.load_last_key_block().await {
+            let key_block_response = serde_json::to_value(BlockResponse {
+                block: last_key_block.block().clone(),
+            })?;
+
+            self.key_block_response
+                .compare_and_swap(&None::<Arc<_>>, Some(Arc::new(key_block_response)));
+        }
 
         Ok(())
     }
