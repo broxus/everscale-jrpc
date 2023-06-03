@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use arc_swap::{ArcSwapOption, ArcSwapWeak};
 use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
@@ -16,6 +16,7 @@ use super::{QueryError, QueryResult};
 pub struct JrpcState {
     engine: ArcSwapWeak<ton_indexer::Engine>,
     key_block_response: ArcSwapOption<serde_json::Value>,
+    blockchain_config_response: Arc<ArcSwapOption<serde_json::Value>>,
     masterchain_accounts_cache: RwLock<Option<ShardAccounts>>,
     shard_accounts_cache: RwLock<FxHashMap<ton_block::ShardIdent, ShardAccounts>>,
     counters: Counters,
@@ -27,6 +28,7 @@ impl JrpcState {
         JrpcState {
             engine: Default::default(),
             key_block_response: Default::default(),
+            blockchain_config_response: Default::default(),
             masterchain_accounts_cache: Default::default(),
             shard_accounts_cache: Default::default(),
             counters: Default::default(),
@@ -125,12 +127,24 @@ impl JrpcState {
         self.engine.store(Arc::downgrade(engine));
 
         if let Ok(last_key_block) = engine.load_last_key_block().await {
+            self.update_blockchain_config(last_key_block.block())?;
+
             let key_block_response = serde_json::to_value(BlockResponse {
                 block: last_key_block.block().clone(),
             })?;
 
             self.key_block_response
                 .compare_and_swap(&None::<Arc<_>>, Some(Arc::new(key_block_response)));
+        } else {
+            let zerostate = engine.load_mc_zero_state().await?;
+            let config = zerostate.config_params()?;
+
+            let response = serde_json::to_value(BlockchainConfigResponse {
+                global_id: zerostate.state().global_id(),
+                config: config.clone(),
+            })?;
+            self.blockchain_config_response
+                .compare_and_swap(&None::<Arc<_>>, Some(Arc::new(response)));
         }
 
         Ok(())
@@ -160,6 +174,12 @@ impl JrpcState {
     }
 
     pub(crate) fn get_last_key_block(&self) -> QueryResult<Arc<serde_json::Value>> {
+        self.key_block_response
+            .load_full()
+            .ok_or(QueryError::NotReady)
+    }
+
+    pub(crate) fn get_last_blockchain_config(&self) -> QueryResult<Arc<serde_json::Value>> {
         self.key_block_response
             .load_full()
             .ok_or(QueryError::NotReady)
@@ -264,6 +284,10 @@ impl JrpcState {
     }
 
     fn update_key_block(&self, block: &ton_block::Block) {
+        if let Err(e) = self.update_blockchain_config(block) {
+            tracing::error!("Failed to update blockchain config: {e:?}");
+        }
+
         match serde_json::to_value(BlockResponse {
             block: block.clone(),
         }) {
@@ -272,6 +296,21 @@ impl JrpcState {
                 tracing::error!("Failed to update key block: {e:?}");
             }
         }
+    }
+
+    fn update_blockchain_config(&self, block: &ton_block::Block) -> Result<()> {
+        let extra = block.read_extra()?;
+        let custom = extra.read_custom()?.context("No masterchain extra")?;
+        let config = custom.config().context("No config found")?;
+
+        let response = serde_json::to_value(BlockchainConfigResponse {
+            global_id: block.global_id,
+            config: config.clone(),
+        })?;
+        self.blockchain_config_response
+            .store(Some(Arc::new(response)));
+
+        Ok(())
     }
 }
 

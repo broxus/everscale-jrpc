@@ -45,9 +45,13 @@ request to the server in the following format:
 The server will return a JSON-RPC response with the following format:
 
 ```
-
-{ "jsonrpc": "2.0", "result": "<key_block>", "id": 1 }
-
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "block": "<key_block>"
+  },
+  "id": 1
+}
 ```
 
 `jsonrpc` (string) - specifies the version of the JSON-RPC protocol being used.
@@ -133,6 +137,36 @@ print(response.json()["result"])
 
   </details>
 
+### `getBlockchainConfig`
+
+The method is used to get the latest blockchain config. It is retrived either
+from the latest key block if it exists, or from the zerostate.
+
+To call the getBlockchainConfig method using JSON-RPC, the client must send a
+request to the server in the following format:
+
+```
+{
+  "jsonrpc": "2.0",
+  "method": "getBlockchainConfig",
+  "params": {},
+  "id": 1
+}
+```
+
+The server will return a JSON-RPC response with the following format:
+
+```
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "globalId": 42,
+    "config": "<base64 encoded ConfigParams>",
+  },
+  "id": 1
+}
+```
+
 ### `getContractState`
 
 This method is used to retrieve the state of a contract at a specific address in
@@ -164,20 +198,19 @@ The server will return a JSON-RPC response with the following format:
 
 {
   "jsonrpc": "2.0",
-  "result": "
-    {
-      "account": <encoded_base64>,
-      "lastTransactionId": {
-        "hash": <hex_encoded>,
-        "isExact": <bool>,
-        "lt": <timestamp>
-      },
-      timings: {
-        "genLt": <logical_time>,
-        "genUtime": <timestamp>
-      },
-      type: <exists | notExists>
-    }",
+  "result": {
+    "account": <encoded_base64>,
+    "lastTransactionId": {
+      "hash": <hex_encoded>,
+      "isExact": <bool>,
+      "lt": <timestamp>
+    },
+    timings: {
+      "genLt": <logical_time>,
+      "genUtime": <timestamp>
+    },
+    type: <exists | notExists>
+  },
   "id": <number>
 }
 
@@ -281,7 +314,7 @@ The server will return a JSON-RPC response with the following format:
 ```
 {
   "jsonrpc": "2.0",
-  "result": "<address []>",
+  "result": ["address1", "..."],
   "id": 1
 }
 

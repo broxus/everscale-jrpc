@@ -120,6 +120,10 @@ async fn jrpc_router(
             Ok(b) => JsonRpcResponse::success(answer_id, b.as_ref()),
             Err(e) => make_error(answer_id, e, counters),
         },
+        "getBlockchainConfig" => match ctx.get_last_blockchain_config() {
+            Ok(b) => JsonRpcResponse::success(answer_id, b.as_ref()),
+            Err(e) => make_error(answer_id, e, counters),
+        },
         "getContractState" => {
             let request: GetContractStateRequest = req.parse_params()?;
             match ctx.get_contract_state(&request.address) {

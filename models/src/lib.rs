@@ -36,6 +36,14 @@ pub struct BlockResponse {
     pub block: ton_block::Block,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlockchainConfigResponse {
+    pub global_id: i32,
+    #[serde(with = "serde_ton_block")]
+    pub config: ton_block::ConfigParams,
+}
+
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
