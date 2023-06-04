@@ -22,24 +22,10 @@ pub struct GetContractStateRequestRef<'a> {
     pub address: &'a ton_block::MsgAddressInt,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SendMessageRequest {
-    /// Base64 encoded message
-    #[serde(with = "serde_ton_block")]
-    pub message: ton_block::Message,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlockResponse {
-    /// Base64 encoded block
-    #[serde(with = "serde_ton_block")]
-    pub block: ton_block::Block,
-}
-
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
-pub enum ContractStateResponse {
+pub enum GetContractStateResponse {
     NotExists,
     #[serde(rename_all = "camelCase")]
     Exists {
@@ -49,6 +35,20 @@ pub enum ContractStateResponse {
         timings: nekoton_abi::GenTimings,
         last_transaction_id: nekoton_abi::LastTransactionId,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SendMessageRequest {
+    /// Base64 encoded message
+    #[serde(with = "serde_ton_block")]
+    pub message: ton_block::Message,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetLatestKeyBlockResponse {
+    /// Base64 encoded block
+    #[serde(with = "serde_ton_block")]
+    pub block: ton_block::Block,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -113,12 +113,12 @@ pub struct GetDstTransactionRequestRef<'a> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct StatusResponse {
+pub struct GetStatusResponse {
     pub ready: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, Eq, PartialEq)]
-pub struct EngineMetrics {
+pub struct GetTimingsResponse {
     pub last_mc_block_seqno: u32,
     pub last_shard_client_mc_block_seqno: u32,
     pub last_mc_utime: u32,
@@ -126,7 +126,7 @@ pub struct EngineMetrics {
     pub shard_client_time_diff: i64,
 }
 
-impl EngineMetrics {
+impl GetTimingsResponse {
     pub fn is_reliable(&self) -> bool {
         // just booted up
         if self == &Self::default() {
@@ -156,13 +156,13 @@ fn now() -> u64 {
         .as_secs()
 }
 
-impl PartialOrd for EngineMetrics {
+impl PartialOrd for GetTimingsResponse {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for EngineMetrics {
+impl Ord for GetTimingsResponse {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         (self.shard_client_time_diff, self.mc_time_diff)
             .cmp(&(other.shard_client_time_diff, other.mc_time_diff))
@@ -175,7 +175,7 @@ mod test {
 
     #[test]
     fn older_than() {
-        let metrics = EngineMetrics {
+        let metrics = GetTimingsResponse {
             last_mc_block_seqno: 0,
             last_shard_client_mc_block_seqno: 0,
             last_mc_utime: now() as u32,

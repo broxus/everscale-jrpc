@@ -33,7 +33,7 @@ pub struct JrpcClient {
 }
 
 impl JrpcClient {
-    /// [endpoints] full URLs of the RPC endpoints.
+    /// `endpoints` - full URLs of the RPC endpoints.
     pub async fn new<I: IntoIterator<Item = Url>>(
         endpoints: I,
         options: JrpcClientOptions,
@@ -53,7 +53,7 @@ impl JrpcClient {
         Ok(client)
     }
 
-    /// [endpoints] full URLs of the RPC endpoints.
+    /// `endpoints` - full URLs of the RPC endpoints.
     pub async fn with_client<I: IntoIterator<Item = Url>>(
         client: reqwest::Client,
         endpoints: I,
@@ -111,8 +111,8 @@ impl JrpcClient {
     ) -> Result<Option<ExistingContract>> {
         let req = GetContractStateRequestRef { address };
         match self.request("getContractState", req).await?.into_inner() {
-            ContractStateResponse::NotExists => Ok(None),
-            ContractStateResponse::Exists {
+            GetContractStateResponse::NotExists => Ok(None),
+            GetContractStateResponse::Exists {
                 account,
                 timings,
                 last_transaction_id,
@@ -143,7 +143,7 @@ impl JrpcClient {
             .map(Some)
     }
 
-    /// Works like `get_contract_state`, but also checks that node has state older than [time].
+    /// Works like `get_contract_state`, but also checks that node has state older than `time`.
     /// If state is not fresh, returns `Err`.
     /// This method should be used with `ChooseStrategy::TimeBased`.
     pub async fn get_contract_state_with_time_check(
@@ -154,11 +154,11 @@ impl JrpcClient {
         let req = GetContractStateRequestRef { address };
         let response = self.request("getContractState", req).await?;
         match response.result {
-            ContractStateResponse::NotExists => {
+            GetContractStateResponse::NotExists => {
                 response.has_state_for(time)?;
                 Ok(None)
             }
-            ContractStateResponse::Exists {
+            GetContractStateResponse::Exists {
                 account,
                 timings,
                 last_transaction_id,
@@ -322,7 +322,7 @@ impl JrpcClient {
         executor.run(message)
     }
 
-    pub async fn get_latest_key_block(&self) -> Result<BlockResponse, RunError> {
+    pub async fn get_latest_key_block(&self) -> Result<GetLatestKeyBlockResponse, RunError> {
         self.request("getLatestKeyBlock", ())
             .await
             .map(|x| x.result)
@@ -450,7 +450,7 @@ impl JrpcClient {
 
 pub struct Answer<D> {
     result: D,
-    node_stats: Option<EngineMetrics>,
+    node_stats: Option<GetTimingsResponse>,
 }
 
 impl<D> Answer<D>
@@ -644,7 +644,7 @@ struct JrpcConnection {
     endpoint: Arc<String>,
     client: reqwest::Client,
     was_dead: Arc<AtomicBool>,
-    stats: Arc<Mutex<Option<EngineMetrics>>>,
+    stats: Arc<Mutex<Option<GetTimingsResponse>>>,
 }
 
 impl PartialEq<Self> for JrpcConnection {
@@ -740,11 +740,11 @@ impl JrpcConnection {
 
         match result.result {
             JsonRpcAnswer::Result(v) => {
-                let timings: Result<EngineMetrics, _> = serde_json::from_value(v);
+                let timings: Result<GetTimingsResponse, _> = serde_json::from_value(v);
                 if let Ok(t) = timings {
                     let is_reliable = t.is_reliable();
                     if !is_reliable {
-                        let EngineMetrics {
+                        let GetTimingsResponse {
                             last_mc_block_seqno,
                             last_shard_client_mc_block_seqno,
                             mc_time_diff,
@@ -810,18 +810,18 @@ impl JrpcConnection {
         Ok(res)
     }
 
-    fn get_stats(&self) -> Option<EngineMetrics> {
+    fn get_stats(&self) -> Option<GetTimingsResponse> {
         self.stats.lock().clone()
     }
 
-    fn set_stats(&self, stats: Option<EngineMetrics>) {
+    fn set_stats(&self, stats: Option<GetTimingsResponse>) {
         *self.stats.lock() = stats;
     }
 }
 
 enum LiveCheckResult {
     /// GetTimings request was successful
-    Live(EngineMetrics),
+    Live(GetTimingsResponse),
     /// Keyblock request was successful, but getTimings failed
     Dummy,
     Dead,

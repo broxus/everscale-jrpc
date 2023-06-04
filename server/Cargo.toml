@@ -7,11 +7,12 @@ edition = "2021"
 anyhow = "1.0"
 arc-swap = { version = "1.6", features = ["weak"] }
 axum = { version = "0.6.0", features = ["http2"] }
-axum-jrpc = "0.3.2"
+axum-jrpc = { version = "0.5.1", features = ["serde_json"] }
 base64 = "0.13"
 fdlimit = "0.2.1"
 num_cpus = "1.13.1"
 rlimit = "0.9.1"
+tokio = { version = "1", features = ["sync"] }
 weedb = { version = "0.1", features = ["zstd", "lz4", "jemalloc"] }
 
 everscale-jrpc-models = { path = "../models" }
