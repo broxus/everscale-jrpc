@@ -6,13 +6,13 @@ use std::time::Duration;
 
 use anyhow::Result;
 use arc_swap::ArcSwapOption;
-use axum::extract::State;
+use axum::extract::{DefaultBodyLimit, State};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use serde::Serialize;
+use ton_block::{Deserializable, Serializable};
 
 use everscale_jrpc_models::*;
-use ton_block::{Deserializable, Serializable};
 
 use crate::storage::ShardAccountFromCache;
 use crate::{Counters, JrpcState};
@@ -101,10 +101,31 @@ impl JrpcServer {
     }
 
     pub fn serve(self: Arc<Self>) -> Result<impl Future<Output = ()> + Send + 'static> {
+        use tower::ServiceBuilder;
+        use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
+        use tower_http::timeout::TimeoutLayer;
+
         let listen_address = self.state.config.listen_address;
 
         // Prepare middleware
-        let service = tower::ServiceBuilder::new();
+        let service = ServiceBuilder::new()
+            .layer(DefaultBodyLimit::max(MAX_REQUEST_SIZE))
+            .layer(
+                CorsLayer::new()
+                    .allow_headers(AllowHeaders::list([
+                        axum::http::header::AUTHORIZATION,
+                        axum::http::header::CONTENT_TYPE,
+                    ]))
+                    .allow_origin(AllowOrigin::any())
+                    .allow_methods(AllowMethods::list([
+                        axum::http::Method::GET,
+                        axum::http::Method::POST,
+                        axum::http::Method::OPTIONS,
+                        axum::http::Method::PUT,
+                    ])),
+            )
+            .layer(TimeoutLayer::new(Duration::from_secs(10)));
+
         #[cfg(feature = "compression")]
         let service = service.layer(tower_http::compression::CompressionLayer::new().gzip(true));
 
@@ -125,6 +146,8 @@ impl JrpcServer {
         Ok(async move { future.await.unwrap() })
     }
 }
+
+const MAX_REQUEST_SIZE: usize = 2 << 17; //256kb
 
 async fn health_check() -> impl axum::response::IntoResponse {
     std::time::SystemTime::now()
