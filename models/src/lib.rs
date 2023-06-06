@@ -53,6 +53,14 @@ pub struct GetLatestKeyBlockResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GetBlockchainConfigResponse {
+    pub global_id: i32,
+    #[serde(with = "serde_ton_block")]
+    pub config: ton_block::ConfigParams,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GetTransactionsListRequest {
     #[serde(with = "serde_address")]
     pub account: ton_block::MsgAddressInt,

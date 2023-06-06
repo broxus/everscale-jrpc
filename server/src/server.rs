@@ -4,7 +4,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use arc_swap::ArcSwapOption;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::response::IntoResponse;
@@ -21,6 +21,7 @@ pub struct JrpcServer {
     state: Arc<JrpcState>,
     capabilities_response: serde_json::Value,
     key_block_response: Arc<ArcSwapOption<serde_json::Value>>,
+    config_response: Arc<ArcSwapOption<serde_json::Value>>,
 }
 
 impl JrpcServer {
@@ -30,6 +31,7 @@ impl JrpcServer {
             let mut capabilities = vec![
                 "getCapabilities",
                 "getLatestKeyBlock",
+                "getBlockchainConfig",
                 "getStatus",
                 "getTimings",
                 "getContractState",
@@ -49,54 +51,73 @@ impl JrpcServer {
         };
 
         // Prepare key block response listener
-        let key_block_response = {
-            fn serialize_block(block: &ton_block::Block) -> Result<Arc<serde_json::Value>> {
-                serde_json::to_value(GetLatestKeyBlockResponse {
-                    block: block.clone(),
-                })
-                .map(Arc::new)
-                .map_err(From::from)
+        fn serialize_block(
+            block: &ton_block::Block,
+        ) -> Result<(Arc<serde_json::Value>, Arc<serde_json::Value>)> {
+            let extra = block.read_extra()?;
+            let custom = extra
+                .read_custom()?
+                .context("No custom found for key block")?;
+            let config = custom.config().context("No config found for key block")?;
+
+            let key_block_response = serde_json::to_value(GetLatestKeyBlockResponse {
+                block: block.clone(),
+            })?;
+            let config_response = serde_json::to_value(GetBlockchainConfigResponse {
+                global_id: block.global_id,
+                config: config.clone(),
+            })?;
+
+            Ok((Arc::new(key_block_response), Arc::new(config_response)))
+        }
+
+        let mut key_block_rx = state.runtime_storage.subscribe_to_key_blocks();
+        let (key_block_response, config_response) = match &*key_block_rx.borrow_and_update() {
+            Some(block) => {
+                let (key_block, config) = serialize_block(block)?;
+                (
+                    Arc::new(ArcSwapOption::new(Some(key_block))),
+                    Arc::new(ArcSwapOption::new(Some(config))),
+                )
             }
+            None => Default::default(),
+        };
 
-            let mut key_block_rx = state.runtime_storage.subscribe_to_key_blocks();
-            let key_block = Arc::new(ArcSwapOption::new(
-                key_block_rx
-                    .borrow_and_update()
-                    .as_ref()
-                    .map(serialize_block)
-                    .transpose()?,
-            ));
+        tokio::spawn({
+            let key_block_response = Arc::downgrade(&key_block_response);
+            let config_response = Arc::downgrade(&config_response);
+            async move {
+                while key_block_rx.changed().await.is_ok() {
+                    let (Some(key_block_response), Some(config_response)) = (
+                        key_block_response.upgrade(),
+                        config_response.upgrade()
+                    ) else {
+                        return;
+                    };
 
-            tokio::spawn({
-                let key_block = Arc::downgrade(&key_block);
-                async move {
-                    while key_block_rx.changed().await.is_ok() {
-                        let Some(key_block) = key_block.upgrade() else {
-                            return;
-                        };
+                    let data = key_block_rx
+                        .borrow_and_update()
+                        .as_ref()
+                        .map(serialize_block);
 
-                        let data = key_block_rx
-                            .borrow_and_update()
-                            .as_ref()
-                            .map(serialize_block);
-
-                        match data {
-                            Some(Ok(data)) => key_block.store(Some(data)),
-                            Some(Err(e)) => tracing::error!("failed to update key block: {e:?}"),
-                            None => continue,
+                    match data {
+                        Some(Ok((key_block, config))) => {
+                            key_block_response.store(Some(key_block));
+                            config_response.store(Some(config));
                         }
+                        Some(Err(e)) => tracing::error!("failed to update key block: {e:?}"),
+                        None => continue,
                     }
                 }
-            });
-
-            key_block
-        };
+            }
+        });
 
         // Done
         Ok(Arc::new(Self {
             state,
             capabilities_response,
             key_block_response,
+            config_response,
         }))
     }
 
@@ -221,7 +242,8 @@ async fn jrpc_router(
     let req = Request::new(req, ctx.state.counters());
     match req.method() {
         "getCapabilities" => req.fill(ctx.get_capabilities()),
-        "getLatestKeyBlock" => req.fill(ctx.get_last_key_block()),
+        "getLatestKeyBlock" => req.fill(ctx.get_latest_key_block()),
+        "getBlockchainConfig" => req.fill(ctx.get_blockchain_config()),
         "getStatus" => req.fill(ctx.get_status()),
         "getTimings" => req.fill(ctx.get_timings()),
         "getContractState" => req.fill_with_params(|req| ctx.get_contract_state(req)),
@@ -240,10 +262,17 @@ impl JrpcServer {
         Ok(&self.capabilities_response)
     }
 
-    fn get_last_key_block(&self) -> QueryResult<ArcJson> {
+    fn get_latest_key_block(&self) -> QueryResult<ArcJson> {
         // TODO: generate stub key block from zerostate
         match self.key_block_response.load_full() {
             Some(key_block) => Ok(ArcJson(key_block)),
+            None => Err(QueryError::NotReady),
+        }
+    }
+
+    fn get_blockchain_config(&self) -> QueryResult<ArcJson> {
+        match self.config_response.load_full() {
+            Some(config) => Ok(ArcJson(config)),
             None => Err(QueryError::NotReady),
         }
     }
