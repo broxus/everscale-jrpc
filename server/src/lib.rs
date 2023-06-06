@@ -73,19 +73,40 @@ pub struct Config {
     pub api_config: ApiConfig,
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ApiConfig {
-    #[default]
-    Simple,
+    Simple(CommonApiConfig),
     Full {
+        #[serde(flatten)]
+        common: CommonApiConfig,
         persistent_db_path: PathBuf,
         #[serde(default)]
         persistent_db_options: DbOptions,
     },
 }
 
+impl Default for ApiConfig {
+    fn default() -> Self {
+        Self::Simple(Default::default())
+    }
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CommonApiConfig {
+    /// Whether to generate a stub keyblock from zerostate. Default: `false`.
+    pub generate_stub_keyblock: bool,
+}
+
 impl ApiConfig {
+    pub fn common(&self) -> &CommonApiConfig {
+        match self {
+            Self::Simple(common) => common,
+            Self::Full { common, .. } => common,
+        }
+    }
+
     pub fn is_full(&self) -> bool {
         matches!(self, Self::Full { .. })
     }
@@ -102,10 +123,11 @@ pub struct JrpcState {
 impl JrpcState {
     pub fn new(config: Config) -> Result<Self> {
         let persistent_storage = match &config.api_config {
-            ApiConfig::Simple => None,
+            ApiConfig::Simple(..) => None,
             ApiConfig::Full {
                 persistent_db_path,
                 persistent_db_options,
+                ..
             } => Some(PersistentStorage::new(
                 persistent_db_path,
                 persistent_db_options,
@@ -122,10 +144,22 @@ impl JrpcState {
     }
 
     pub async fn initialize(&self, engine: &Arc<ton_indexer::Engine>) -> Result<()> {
-        if let Ok(last_key_block) = engine.load_last_key_block().await {
-            self.runtime_storage
-                .update_key_block(last_key_block.block());
+        match engine.load_last_key_block().await {
+            Ok(last_key_block) => {
+                self.runtime_storage
+                    .update_key_block(last_key_block.block());
+            }
+            Err(e) => {
+                if self.config.api_config.common().generate_stub_keyblock {
+                    let zerostate = engine.load_mc_zero_state().await?;
+                    self.runtime_storage
+                        .update_key_block(&make_key_block_stub(&zerostate)?);
+                } else {
+                    return Err(e);
+                }
+            }
         }
+
         self.engine.store(Arc::downgrade(engine));
         Ok(())
     }
@@ -237,4 +271,26 @@ pub struct JrpcMetrics {
     pub not_found: u64,
     /// Number of requests with unknown method
     pub errors: u64,
+}
+
+fn make_key_block_stub(zerostate: &ShardStateStuff) -> Result<ton_block::Block> {
+    let state = zerostate.state();
+
+    let mut block_info = ton_block::BlockInfo::new();
+    block_info.set_key_block(true);
+    block_info.set_gen_utime(state.gen_time().into());
+
+    let mut extra = ton_block::BlockExtra::new();
+
+    let mut mc_block_extra = ton_block::McBlockExtra::default();
+    mc_block_extra.set_config(zerostate.config_params()?.clone());
+    extra.write_custom(Some(&mc_block_extra))?;
+
+    ton_block::Block::with_params(
+        state.global_id(),
+        block_info,
+        Default::default(),
+        Default::default(),
+        extra,
+    )
 }
