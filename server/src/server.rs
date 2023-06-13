@@ -10,7 +10,7 @@ use axum::extract::{DefaultBodyLimit, State};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use serde::Serialize;
-use ton_block::{Deserializable, Serializable};
+use ton_block::{Deserializable, MsgAddressInt, Serializable};
 
 use everscale_jrpc_models::*;
 
@@ -247,6 +247,7 @@ async fn jrpc_router(
         "getStatus" => req.fill(ctx.get_status()),
         "getTimings" => req.fill(ctx.get_timings()),
         "getContractState" => req.fill_with_params(|req| ctx.get_contract_state(req)),
+        "getAccountsByCodeHash" => req.fill_with_params(|req| ctx.get_accounts_by_code_hash(req)),
         "sendMessage" => req.fill_with_params(|req| ctx.send_message(req)),
         "getTransactionsList" => req.fill_with_params(|req| ctx.get_transactions_list(req)),
         "getTransaction" => req.fill_with_params(|req| ctx.get_transaction(req)),
@@ -346,6 +347,79 @@ impl JrpcServer {
         })
     }
 
+    fn get_accounts_by_code_hash(
+        &self,
+        req: &GetAccountsByCodeHashRequest,
+    ) -> QueryResult<Vec<String>> {
+        use crate::storage::tables;
+
+        const MAX_LIMIT: u8 = 100;
+
+        let Some(storage) = &self.state.persistent_storage else {
+            return Err(QueryError::NotSupported);
+        };
+
+        let limit = match req.limit {
+            0 => return Ok(Vec::new()),
+            l if l > MAX_LIMIT => return Err(QueryError::TooBigRange),
+            l => l,
+        };
+
+        let Some(snapshot) = storage.load_snapshot() else {
+            return Err(QueryError::NotReady);
+        };
+
+        let mut key = [0u8; { tables::CodeHashes::KEY_LEN }];
+        key[0..32].copy_from_slice(&req.code_hash);
+        if let Some(continuation) = &req.continuation {
+            extract_address(&continuation, &mut key, Some(32))?;
+        }
+
+        let mut upper_bound = Vec::with_capacity(tables::CodeHashes::KEY_LEN);
+        upper_bound.extend_from_slice(&key[..32]);
+        upper_bound.extend_from_slice(&[0xFF; 33]);
+
+        let mut readopts = storage.code_hashes.new_read_config();
+        readopts.set_snapshot(&snapshot);
+        readopts.set_iterate_upper_bound(upper_bound);
+
+        let code_hashes_cf = storage.code_hashes.cf();
+        let mut iter = storage
+            .inner
+            .raw()
+            .raw_iterator_cf_opt(&code_hashes_cf, readopts);
+        iter.seek(key);
+
+        let mut result = Vec::with_capacity(std::cmp::min(8, limit) as usize);
+
+        for _ in 0..limit {
+            match iter.key() {
+                Some(value) => {
+                    let address = MsgAddressInt::construct_from_bytes(&value[33..]);
+                    match address {
+                        Ok(address) => {
+                            result.push(address.to_string());
+                        }
+                        Err(e) => {
+                            tracing::error!("parsing address from key failed: {e:?}");
+                            return Err(QueryError::StorageError);
+                        }
+                    }
+                    iter.next();
+                }
+                None => match iter.status() {
+                    Ok(()) => break,
+                    Err(e) => {
+                        tracing::error!("transactions iterator failed: {e:?}");
+                        return Err(QueryError::StorageError);
+                    }
+                },
+            }
+        }
+
+        Ok(result)
+    }
+
     fn send_message(&self, req: &SendMessageRequest) -> QueryResult<()> {
         let Some(engine) = self.state.engine.load().upgrade() else {
             return Err(QueryError::NotReady);
@@ -387,7 +461,7 @@ impl JrpcServer {
         };
 
         let mut key = [0u8; { crate::storage::tables::Transactions::KEY_LEN }];
-        extract_address(&req.account, &mut key)?;
+        extract_address(&req.account, &mut key, None)?;
         key[33..].copy_from_slice(&req.last_transaction_lt.unwrap_or(u64::MAX).to_be_bytes());
 
         let mut lower_bound = Vec::with_capacity(tables::Transactions::KEY_LEN);
@@ -479,14 +553,19 @@ impl JrpcServer {
     }
 }
 
-fn extract_address(address: &ton_block::MsgAddressInt, target: &mut [u8]) -> QueryResult<()> {
+fn extract_address(
+    address: &ton_block::MsgAddressInt,
+    target: &mut [u8],
+    offset: Option<usize>,
+) -> QueryResult<()> {
     if let ton_block::MsgAddressInt::AddrStd(address) = address {
         let account = address.address.get_bytestring_on_stack(0);
         let account = account.as_ref();
+        let offset = offset.unwrap_or_default();
 
-        if target.len() >= 33 && account.len() == 32 {
-            target[0] = address.workchain_id as u8;
-            target[1..33].copy_from_slice(account);
+        if target.len() >= 33 + offset && account.len() == 32 + offset {
+            target[0 + offset] = address.workchain_id as u8;
+            target[1 + offset..33 + offset].copy_from_slice(account);
             return Ok(());
         }
     }

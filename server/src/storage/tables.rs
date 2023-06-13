@@ -45,6 +45,10 @@ impl ColumnFamily for TransactionsByInMsg {
 /// - Value: empty
 pub struct CodeHashes;
 
+impl CodeHashes {
+    pub const KEY_LEN: usize = 32 + 1 + 32;
+}
+
 impl ColumnFamily for CodeHashes {
     const NAME: &'static str = "code_hashes";
 
