@@ -372,7 +372,7 @@ impl JrpcServer {
         let mut key = [0u8; { tables::CodeHashes::KEY_LEN }];
         key[0..32].copy_from_slice(&req.code_hash);
         if let Some(continuation) = &req.continuation {
-            extract_address(&continuation, &mut key, Some(32))?;
+            extract_address(&continuation, &mut key[32..])?;
         }
 
         let mut upper_bound = Vec::with_capacity(tables::CodeHashes::KEY_LEN);
@@ -410,7 +410,7 @@ impl JrpcServer {
                 None => match iter.status() {
                     Ok(()) => break,
                     Err(e) => {
-                        tracing::error!("transactions iterator failed: {e:?}");
+                        tracing::error!("code hashes iterator failed: {e:?}");
                         return Err(QueryError::StorageError);
                     }
                 },
@@ -461,7 +461,7 @@ impl JrpcServer {
         };
 
         let mut key = [0u8; { crate::storage::tables::Transactions::KEY_LEN }];
-        extract_address(&req.account, &mut key, None)?;
+        extract_address(&req.account, &mut key)?;
         key[33..].copy_from_slice(&req.last_transaction_lt.unwrap_or(u64::MAX).to_be_bytes());
 
         let mut lower_bound = Vec::with_capacity(tables::Transactions::KEY_LEN);
@@ -553,19 +553,14 @@ impl JrpcServer {
     }
 }
 
-fn extract_address(
-    address: &ton_block::MsgAddressInt,
-    target: &mut [u8],
-    offset: Option<usize>,
-) -> QueryResult<()> {
-    if let ton_block::MsgAddressInt::AddrStd(address) = address {
+fn extract_address(address: &MsgAddressInt, target: &mut [u8]) -> QueryResult<()> {
+    if let MsgAddressInt::AddrStd(address) = address {
         let account = address.address.get_bytestring_on_stack(0);
         let account = account.as_ref();
-        let offset = offset.unwrap_or_default();
 
-        if target.len() >= 33 + offset && account.len() == 32 + offset {
-            target[0 + offset] = address.workchain_id as u8;
-            target[1 + offset..33 + offset].copy_from_slice(account);
+        if target.len() >= 33 && account.len() == 32 {
+            target[0] = address.workchain_id as u8;
+            target[1..33].copy_from_slice(account);
             return Ok(());
         }
     }
