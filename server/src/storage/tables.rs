@@ -61,6 +61,10 @@ impl ColumnFamily for CodeHashes {
 /// - Value: `code_hash: u256`
 pub struct CodeHashesByAddress;
 
+impl CodeHashesByAddress {
+    pub const KEY_LEN: usize = 1 + 32;
+}
+
 impl ColumnFamily for CodeHashesByAddress {
     const NAME: &'static str = "code_hashes_by_address";
 
