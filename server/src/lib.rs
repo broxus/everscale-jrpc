@@ -269,7 +269,7 @@ impl JrpcState {
         block_info: &ton_block::BlockInfo,
         shard_state: Option<&ShardStateStuff>,
     ) -> Result<()> {
-        if let Some(shard_state) = shard_state {
+        if let Some(shard_state) = &shard_state {
             self.runtime_storage
                 .update_contract_states(block_id, block_info, shard_state)?;
         }
@@ -279,7 +279,7 @@ impl JrpcState {
         }
 
         if let Some(storage) = &self.persistent_storage {
-            storage.update(block_id, block)?;
+            storage.update(block_id, block, shard_state)?;
         }
 
         Ok(())

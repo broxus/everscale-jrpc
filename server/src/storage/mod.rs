@@ -3,13 +3,15 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use arc_swap::ArcSwapOption;
+use once_cell::race::OnceBox;
 use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
-use ton_block::{Deserializable, HashmapAugType};
+use ton_block::AccountState::AccountActive;
+use ton_block::{AccountStuff, Deserializable, HashmapAugType, Serializable, StateInit};
 use ton_indexer::utils::{RefMcStateHandle, ShardStateStuff};
-use ton_types::HashmapType;
+use ton_types::{HashmapType, UInt256};
 use weedb::{rocksdb, Caches, Migrations, Semver, Table, WeeDb};
 
 pub mod tables;
@@ -296,7 +298,12 @@ impl PersistentStorage {
         self.snapshot.store(Some(snapshot));
     }
 
-    pub fn update(&self, block_id: &ton_block::BlockIdExt, block: &ton_block::Block) -> Result<()> {
+    pub fn update(
+        &self,
+        block_id: &ton_block::BlockIdExt,
+        block: &ton_block::Block,
+        shard_state: Option<&ShardStateStuff>,
+    ) -> Result<()> {
         let workchain = block_id.shard().workchain_id();
         let Ok(workchain) = i8::try_from(workchain) else {
             return Ok(());
@@ -310,6 +317,9 @@ impl PersistentStorage {
         let tx_cf = &self.transactions.cf();
         let tx_by_hash_cf = &self.transactions_by_hash.cf();
         let tx_by_in_msg_cf = &self.transactions_by_in_msg.cf();
+
+        let mut code_hash_write_batch = rocksdb::WriteBatch::default();
+        let mut non_empty_code_hash_batch = false;
 
         // Prepare buffer for full tx id
         let mut tx_full_id = [0u8; { tables::Transactions::KEY_LEN }];
@@ -355,7 +365,30 @@ impl PersistentStorage {
                 Ok(true)
             })?;
 
-            // TODO: Update account code hash if `has_special_actions`
+            let mut changed_account = false;
+            let mut deleted_account = false;
+
+            let state_update = value.read_state_update()?;
+
+            if state_update.old_hash != state_update.new_hash {
+                if state_update.new_hash == default_account_hash() {
+                    deleted_account = true;
+                } else {
+                    changed_account = true;
+                }
+            }
+
+            if has_special_actions || changed_account || deleted_account {
+                if let Some(state) = &shard_state {
+                    let updated = self.update_code_hash(
+                        account,
+                        state,
+                        deleted_account,
+                        &mut code_hash_write_batch,
+                    )?;
+                    non_empty_code_hash_batch |= updated;
+                }
+            }
 
             Ok(true)
         })?;
@@ -367,7 +400,88 @@ impl PersistentStorage {
                 .context("Failed to update JRPC storage")?;
         }
 
+        if non_empty_code_hash_batch {
+            self.inner
+                .raw()
+                .write_opt(code_hash_write_batch, self.code_hashes.write_config())
+                .context("Failed to update JRPC storage")?;
+        }
         Ok(())
+    }
+
+    fn update_code_hash(
+        &self,
+        account: UInt256,
+        shard_state: &ShardStateStuff,
+        deleted_account: bool,
+        write_batch: &mut rocksdb::WriteBatch,
+    ) -> Result<bool> {
+        let shard_state_accounts = shard_state.state().read_accounts()?;
+        // Prepare column families
+        let code_hashes_cf = &self.code_hashes.cf();
+        let code_hashes_by_address_cf = &self.code_hashes_by_address.cf();
+
+        // Prepare buffer for code hashes ids
+        let mut code_hashes_full_id = [0u8; { tables::CodeHashes::KEY_LEN }];
+        let mut code_hashes_by_address_full_id = [0u8; { tables::CodeHashesByAddress::KEY_LEN }];
+        let workchain = shard_state.shard().workchain_id();
+        code_hashes_by_address_full_id[0] = workchain as u8;
+        code_hashes_by_address_full_id[1..33].copy_from_slice(account.as_slice());
+
+        code_hashes_full_id[32] = workchain as u8;
+        code_hashes_full_id[33..65].copy_from_slice(account.as_slice());
+        let old_code_hash = match self
+            .code_hashes_by_address
+            .get(code_hashes_by_address_full_id.as_slice())
+            .context("Failed to resolve code hashes by address")?
+        {
+            Some(code_hash) => code_hash,
+            None => return Ok(false),
+        };
+
+        if deleted_account {
+            // Fill account address in full code hashes buffer
+            code_hashes_full_id[..32].copy_from_slice(&old_code_hash);
+
+            write_batch.delete_cf(code_hashes_cf, code_hashes_full_id.as_slice());
+            write_batch.delete_cf(
+                code_hashes_by_address_cf,
+                code_hashes_by_address_full_id.as_slice(),
+            );
+        } else if let Some(shard_account) = shard_state_accounts
+            .get(&account)
+            .context("Failed to get shard account by address")?
+        {
+            if let ton_block::Account::Account(AccountStuff { storage, .. }) =
+                shard_account.read_account()?
+            {
+                if let AccountActive {
+                    state_init: StateInit { code, .. },
+                } = storage.state
+                {
+                    if let Some(code_hash) = code {
+                        // delete old code hash
+                        code_hashes_full_id[..32].copy_from_slice(&old_code_hash);
+                        write_batch.delete_cf(code_hashes_cf, code_hashes_full_id.as_slice());
+                        write_batch.delete_cf(
+                            code_hashes_by_address_cf,
+                            code_hashes_by_address_full_id.as_slice(),
+                        );
+
+                        //create new code hash
+                        code_hashes_full_id[..32].copy_from_slice(code_hash.repr_hash().as_slice());
+                        // Write tx data and indices
+                        write_batch.put_cf(code_hashes_cf, code_hashes_full_id.as_slice(), &[0; 1]);
+                        write_batch.put_cf(
+                            code_hashes_by_address_cf,
+                            code_hashes_by_address_full_id.as_slice(),
+                            code_hash.repr_hash().as_slice(),
+                        );
+                    }
+                }
+            }
+        }
+        Ok(true)
     }
 }
 
@@ -439,4 +553,16 @@ fn account_prefix(account: &ton_types::UInt256, len: usize) -> u64 {
     }
 
     value
+}
+
+fn default_account_hash() -> &'static ton_types::UInt256 {
+    static HASH: OnceBox<ton_types::UInt256> = OnceBox::new();
+    HASH.get_or_init(|| {
+        Box::new(
+            ton_block::Account::default()
+                .serialize()
+                .unwrap()
+                .repr_hash(),
+        )
+    })
 }
