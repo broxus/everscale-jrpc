@@ -318,9 +318,6 @@ impl PersistentStorage {
         let tx_by_hash_cf = &self.transactions_by_hash.cf();
         let tx_by_in_msg_cf = &self.transactions_by_in_msg.cf();
 
-        let mut code_hash_write_batch = rocksdb::WriteBatch::default();
-        let mut non_empty_code_hash_batch = false;
-
         // Prepare buffer for full tx id
         let mut tx_full_id = [0u8; { tables::Transactions::KEY_LEN }];
         tx_full_id[0] = workchain as u8;
@@ -380,13 +377,8 @@ impl PersistentStorage {
 
             if has_special_actions || changed_account || deleted_account {
                 if let Some(state) = &shard_state {
-                    let updated = self.update_code_hash(
-                        account,
-                        state,
-                        deleted_account,
-                        &mut code_hash_write_batch,
-                    )?;
-                    non_empty_code_hash_batch |= updated;
+                    let updated = self.update_code_hash(account, state, &mut write_batch)?;
+                    non_empty_batch |= updated;
                 }
             }
 
@@ -400,12 +392,6 @@ impl PersistentStorage {
                 .context("Failed to update JRPC storage")?;
         }
 
-        if non_empty_code_hash_batch {
-            self.inner
-                .raw()
-                .write_opt(code_hash_write_batch, self.code_hashes.write_config())
-                .context("Failed to update JRPC storage")?;
-        }
         Ok(())
     }
 
@@ -413,7 +399,6 @@ impl PersistentStorage {
         &self,
         account: UInt256,
         shard_state: &ShardStateStuff,
-        deleted_account: bool,
         write_batch: &mut rocksdb::WriteBatch,
     ) -> Result<bool> {
         let shard_state_accounts = shard_state.state().read_accounts()?;
@@ -439,16 +424,7 @@ impl PersistentStorage {
             None => return Ok(false),
         };
 
-        if deleted_account {
-            // Fill account address in full code hashes buffer
-            code_hashes_full_id[..32].copy_from_slice(&old_code_hash);
-
-            write_batch.delete_cf(code_hashes_cf, code_hashes_full_id.as_slice());
-            write_batch.delete_cf(
-                code_hashes_by_address_cf,
-                code_hashes_by_address_full_id.as_slice(),
-            );
-        } else if let Some(shard_account) = shard_state_accounts
+        if let Some(shard_account) = shard_state_accounts
             .get(&account)
             .context("Failed to get shard account by address")?
         {
@@ -460,14 +436,6 @@ impl PersistentStorage {
                 } = storage.state
                 {
                     if let Some(code_hash) = code {
-                        // delete old code hash
-                        code_hashes_full_id[..32].copy_from_slice(&old_code_hash);
-                        write_batch.delete_cf(code_hashes_cf, code_hashes_full_id.as_slice());
-                        write_batch.delete_cf(
-                            code_hashes_by_address_cf,
-                            code_hashes_by_address_full_id.as_slice(),
-                        );
-
                         //create new code hash
                         code_hashes_full_id[..32].copy_from_slice(code_hash.repr_hash().as_slice());
                         // Write tx data and indices
@@ -481,6 +449,16 @@ impl PersistentStorage {
                 }
             }
         }
+
+        // delete old code hash
+        code_hashes_full_id[..32].copy_from_slice(&old_code_hash);
+
+        write_batch.delete_cf(code_hashes_cf, code_hashes_full_id.as_slice());
+        write_batch.delete_cf(
+            code_hashes_by_address_cf,
+            code_hashes_by_address_full_id.as_slice(),
+        );
+
         Ok(true)
     }
 }
