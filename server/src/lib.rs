@@ -54,8 +54,9 @@ use anyhow::Result;
 use arc_swap::ArcSwapWeak;
 use serde::{Deserialize, Serialize};
 use ton_block::Account::Account;
-use ton_block::AccountStuff;
+use ton_block::AccountState::AccountActive;
 use ton_block::HashmapAugType;
+use ton_block::{AccountStuff, StateInit};
 use ton_indexer::utils::{BlockStuff, ShardStateStuff};
 use weedb::rocksdb;
 
@@ -186,8 +187,6 @@ impl JrpcState {
 
     pub async fn process_full_state(&self, shard_state: &ShardStateStuff) -> Result<()> {
         if let Some(storage) = &self.persistent_storage {
-            storage.update_snapshot();
-
             let accounts = shard_state.state().read_accounts()?;
             // Prepare column families
             let mut write_batch = rocksdb::WriteBatch::default();
@@ -212,15 +211,25 @@ impl JrpcState {
                 code_hashes_by_address_full_id[1..33].copy_from_slice(id.as_slice());
 
                 if let Account(AccountStuff { storage, .. }) = account.read_account()? {
-                    if let Some(code_hash) = storage.init_code_hash {
-                        code_hashes_full_id[..32].copy_from_slice(code_hash.as_slice());
-                        // Write tx data and indices
-                        write_batch.put_cf(code_hashes_cf, code_hashes_full_id.as_slice(), &[0; 1]);
-                        write_batch.put_cf(
-                            code_hashes_by_address_cf,
-                            code_hashes_by_address_full_id.as_slice(),
-                            code_hash.as_slice(),
-                        );
+                    if let AccountActive {
+                        state_init: StateInit { code, .. },
+                    } = storage.state
+                    {
+                        if let Some(code_hash) = code {
+                            code_hashes_full_id[..32]
+                                .copy_from_slice(code_hash.repr_hash().as_slice());
+                            // Write tx data and indices
+                            write_batch.put_cf(
+                                code_hashes_cf,
+                                code_hashes_full_id.as_slice(),
+                                &[0; 1],
+                            );
+                            write_batch.put_cf(
+                                code_hashes_by_address_cf,
+                                code_hashes_by_address_full_id.as_slice(),
+                                code_hash.repr_hash().as_slice(),
+                            );
+                        }
                     }
                 }
 
