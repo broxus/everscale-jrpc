@@ -53,8 +53,6 @@ use anyhow::Context;
 use anyhow::Result;
 use arc_swap::ArcSwapWeak;
 use serde::{Deserialize, Serialize};
-use ton_block::Account::Account;
-use ton_block::AccountState::AccountActive;
 use ton_block::HashmapAugType;
 use ton_block::{AccountStuff, StateInit};
 use ton_indexer::utils::{BlockStuff, ShardStateStuff};
@@ -187,62 +185,7 @@ impl JrpcState {
 
     pub async fn process_full_state(&self, shard_state: &ShardStateStuff) -> Result<()> {
         if let Some(storage) = &self.persistent_storage {
-            let accounts = shard_state.state().read_accounts()?;
-            // Prepare column families
-            let mut write_batch = rocksdb::WriteBatch::default();
-            let code_hashes_cf = &storage.code_hashes.cf();
-            let code_hashes_by_address_cf = &storage.code_hashes_by_address.cf();
-
-            // Prepare buffer for code hashes ids
-            let mut code_hashes_full_id = [0u8; { tables::CodeHashes::KEY_LEN }];
-            let mut code_hashes_by_address_full_id =
-                [0u8; { tables::CodeHashesByAddress::KEY_LEN }];
-            let workchain = shard_state.shard().workchain_id();
-            code_hashes_full_id[32] = workchain as u8;
-            code_hashes_by_address_full_id[0] = workchain as u8;
-
-            // Iterate all changed accounts in block
-            let mut non_empty_batch = false;
-            accounts.iterate_with_keys(|id, account| {
-                non_empty_batch |= true;
-
-                // Fill account address in full code hashes buffer
-                code_hashes_full_id[33..65].copy_from_slice(id.as_slice());
-                code_hashes_by_address_full_id[1..33].copy_from_slice(id.as_slice());
-
-                if let Account(AccountStuff { storage, .. }) = account.read_account()? {
-                    if let AccountActive {
-                        state_init: StateInit { code, .. },
-                    } = storage.state
-                    {
-                        if let Some(code_hash) = code {
-                            code_hashes_full_id[..32]
-                                .copy_from_slice(code_hash.repr_hash().as_slice());
-                            // Write tx data and indices
-                            write_batch.put_cf(
-                                code_hashes_cf,
-                                code_hashes_full_id.as_slice(),
-                                &[0; 1],
-                            );
-                            write_batch.put_cf(
-                                code_hashes_by_address_cf,
-                                code_hashes_by_address_full_id.as_slice(),
-                                code_hash.repr_hash().as_slice(),
-                            );
-                        }
-                    }
-                }
-
-                Ok(true)
-            })?;
-
-            if non_empty_batch {
-                storage
-                    .inner
-                    .raw()
-                    .write_opt(write_batch, storage.code_hashes.write_config())
-                    .context("Failed to update JRPC storage")?;
-            }
+            storage.reset_accounts(shard_state).await?;
         }
 
         Ok(())
