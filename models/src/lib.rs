@@ -118,10 +118,14 @@ pub struct GetAccountsByCodeHashRequest {
     #[serde(with = "serde_hex_array")]
     pub code_hash: [u8; 32],
 
-    pub limit: u8,
-
-    #[serde(with = "serde_optional_address")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_optional_address"
+    )]
     pub continuation: Option<ton_block::MsgAddressInt>,
+
+    pub limit: u8,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]

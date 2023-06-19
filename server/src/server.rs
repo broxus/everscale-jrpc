@@ -377,44 +377,43 @@ impl JrpcServer {
 
         let mut upper_bound = Vec::with_capacity(tables::CodeHashes::KEY_LEN);
         upper_bound.extend_from_slice(&key[..32]);
-        upper_bound.extend_from_slice(&[0xFF; 33]);
+        upper_bound.extend_from_slice(&[0xff; 33]);
 
         let mut readopts = storage.code_hashes.new_read_config();
         readopts.set_snapshot(&snapshot);
-        readopts.set_iterate_upper_bound(upper_bound);
+        readopts.set_iterate_upper_bound(upper_bound); // NOTE: somehow make the range inclusive
 
         let code_hashes_cf = storage.code_hashes.cf();
         let mut iter = storage
             .inner
             .raw()
             .raw_iterator_cf_opt(&code_hashes_cf, readopts);
+
         iter.seek(key);
+        if req.continuation.is_some() {
+            iter.next();
+        }
 
         let mut result = Vec::with_capacity(std::cmp::min(8, limit) as usize);
 
         for _ in 0..limit {
-            match iter.key() {
-                Some(value) => {
-                    let address = MsgAddressInt::construct_from_bytes(&value[33..]);
-                    match address {
-                        Ok(address) => {
-                            result.push(address.to_string());
-                        }
-                        Err(e) => {
-                            tracing::error!("parsing address from key failed: {e:?}");
-                            return Err(QueryError::StorageError);
-                        }
-                    }
-                    iter.next();
-                }
-                None => match iter.status() {
+            let Some(value) = iter.key() else{
+                match iter.status() {
                     Ok(()) => break,
                     Err(e) => {
                         tracing::error!("code hashes iterator failed: {e:?}");
                         return Err(QueryError::StorageError);
                     }
-                },
+                }
+            };
+
+            if value.len() != tables::CodeHashes::KEY_LEN {
+                tracing::error!("parsing address from key failed: invalid value");
+                return Err(QueryError::StorageError);
             }
+
+            result.push(format!("{}:{}", value[32] as i8, hex::encode(&value[33..])));
+            iter.next();
         }
 
         Ok(result)
