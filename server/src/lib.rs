@@ -69,12 +69,12 @@ pub struct Config {
 
     /// Provided API settings.
     /// Default: `ApiConfig::Simple`.
-    #[serde(default)]
+    #[serde(flatten, default)]
     pub api_config: ApiConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(deny_unknown_fields, tag = "type", rename_all = "camelCase")]
 pub enum ApiConfig {
     Simple(CommonApiConfig),
     Full {
@@ -93,7 +93,7 @@ impl Default for ApiConfig {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct CommonApiConfig {
     /// Whether to generate a stub keyblock from zerostate. Default: `false`.
     pub generate_stub_keyblock: bool,
