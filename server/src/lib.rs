@@ -49,16 +49,11 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use anyhow::Context;
 use anyhow::Result;
 use arc_swap::ArcSwapWeak;
 use serde::{Deserialize, Serialize};
-use ton_block::HashmapAugType;
-use ton_block::{AccountStuff, StateInit};
 use ton_indexer::utils::{BlockStuff, ShardStateStuff};
-use weedb::rocksdb;
 
-use crate::storage::tables;
 pub use everscale_jrpc_models as models;
 
 use self::server::JrpcServer;
