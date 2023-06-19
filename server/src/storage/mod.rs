@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{Context, Result};
 use arc_swap::ArcSwapOption;
@@ -9,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 use ton_block::{Deserializable, HashmapAugType};
 use ton_indexer::utils::{RefMcStateHandle, ShardStateStuff};
-use ton_types::HashmapType;
+use ton_types::{HashmapType, UInt256};
 use weedb::{rocksdb, Caches, Migrations, Semver, Table, WeeDb};
 
 pub mod tables;
@@ -296,7 +297,93 @@ impl PersistentStorage {
         self.snapshot.store(Some(snapshot));
     }
 
-    pub fn update(&self, block_id: &ton_block::BlockIdExt, block: &ton_block::Block) -> Result<()> {
+    pub async fn reset_accounts(&self, shard_state: &ShardStateStuff) -> Result<()> {
+        let shard = shard_state.shard();
+        let workchain = shard.workchain_id();
+        let Ok(workchain) = i8::try_from(workchain) else {
+            return Ok(());
+        };
+
+        let now = Instant::now();
+        tracing::info!(%shard, "clearing old code hash indices");
+        self.remove_code_hashes(shard_state.shard()).await?;
+        tracing::info!(%shard, elapsed_ms = now.elapsed().as_millis(), "cleared old code hash indices");
+
+        let accounts = shard_state.state().read_accounts()?;
+
+        // Prepare column families
+        let mut write_batch = rocksdb::WriteBatch::default();
+        let db = self.inner.raw().as_ref();
+        let code_hashes_cf = &self.code_hashes.cf();
+        let code_hashes_by_address_cf = &self.code_hashes_by_address.cf();
+
+        // Prepare buffer for code hashes ids
+        let mut code_hashes_id = [0u8; { tables::CodeHashes::KEY_LEN }];
+        code_hashes_id[32] = workchain as u8;
+
+        let mut code_hashes_by_address_id = [0u8; { tables::CodeHashesByAddress::KEY_LEN }];
+        code_hashes_by_address_id[0] = workchain as u8;
+
+        // Iterate all changed accounts in block
+        let now = Instant::now();
+        tracing::info!(%shard, "building new code hash indices");
+        let mut non_empty_batch = false;
+        for entry in accounts.iter() {
+            let (id, mut account) = entry?;
+            let id: &[u8; 32] = match id.data().try_into() {
+                Ok(data) => data,
+                Err(_) => continue,
+            };
+
+            let code_hash = {
+                ton_block::DepthBalanceInfo::construct_from(&mut account)?; // skip an augmentation
+                match extract_code_hash(ton_block::ShardAccount::construct_from(&mut account)?)? {
+                    Some(code_hash) => code_hash,
+                    None => continue,
+                }
+            };
+
+            non_empty_batch |= true;
+
+            // Fill account address in full code hashes buffer
+            code_hashes_id[..32].copy_from_slice(code_hash.as_slice());
+            code_hashes_id[33..65].copy_from_slice(id);
+
+            code_hashes_by_address_id[1..33].copy_from_slice(id);
+
+            // Write tx data and indices
+            write_batch.put_cf(code_hashes_cf, code_hashes_id.as_slice(), &[]);
+            write_batch.put_cf(
+                code_hashes_by_address_cf,
+                code_hashes_by_address_id.as_slice(),
+                code_hash.as_slice(),
+            );
+        }
+
+        if non_empty_batch {
+            db.write_opt(write_batch, self.code_hashes.write_config())
+                .context("Failed to update JRPC storage")?;
+        }
+        tracing::info!(%shard, elapsed_ms = now.elapsed().as_millis(), "built new code hash indices");
+
+        // Flush indices after delete/insert
+        let now = Instant::now();
+        tracing::info!(%shard, "flushing code hash indices");
+        let bound = Option::<[u8; 0]>::None;
+        db.compact_range_cf(code_hashes_cf, bound, bound);
+        db.compact_range_cf(code_hashes_by_address_cf, bound, bound);
+        tracing::info!(%shard, elapsed_ms = now.elapsed().as_millis(), "flushed code hash indices");
+
+        // Done
+        Ok(())
+    }
+
+    pub fn update(
+        &self,
+        block_id: &ton_block::BlockIdExt,
+        block: &ton_block::Block,
+        shard_state: Option<&ShardStateStuff>,
+    ) -> Result<()> {
         let workchain = block_id.shard().workchain_id();
         let Ok(workchain) = i8::try_from(workchain) else {
             return Ok(());
@@ -304,6 +391,9 @@ impl PersistentStorage {
 
         let extra = block.read_extra()?;
         let account_blocks = extra.read_account_blocks()?;
+        let accounts = shard_state
+            .map(|shard_state| shard_state.state().read_accounts())
+            .transpose()?;
 
         // Prepare column families
         let mut write_batch = rocksdb::WriteBatch::default();
@@ -324,9 +414,12 @@ impl PersistentStorage {
             tx_full_id[1..33].copy_from_slice(account.as_slice());
 
             // Flag to update code hash
-            let mut has_special_actions = false;
+            let mut has_special_actions = accounts.is_none(); // skip updates for this flag if no state
+            let mut was_active = false;
+            let mut is_active = false;
 
             // Process account transactions
+            let mut first_tx = true;
             value.transactions().iterate_slices(|_, mut value| {
                 let tx_cell = value.checked_drain_reference()?;
                 let tx_hash = tx_cell.repr_hash();
@@ -335,10 +428,26 @@ impl PersistentStorage {
 
                 tx_full_id[33..].copy_from_slice(&tx.lt.to_be_bytes());
 
-                // Update code hash
-                let descr = tx.read_description()?;
-                if let Some(action_phase) = descr.action_phase_ref() {
-                    has_special_actions |= action_phase.spec_actions != 0;
+                // Update marker flags
+                if first_tx {
+                    // Remember the original status from the first transaction
+                    was_active = tx.orig_status == ton_block::AccountStatus::AccStateActive;
+                    first_tx = false;
+                }
+                if was_active && tx.orig_status != ton_block::AccountStatus::AccStateActive {
+                    // Handle the case when an account (with some updated code) was deleted,
+                    // and then deployed with the initial code (end status).
+                    // Treat this situation as a special action.
+                    has_special_actions = true;
+                }
+                is_active = tx.end_status == ton_block::AccountStatus::AccStateActive;
+
+                if !has_special_actions {
+                    // Search for special actions (might be code hash update)
+                    let descr = tx.read_description()?;
+                    if let Some(action_phase) = descr.action_phase_ref() {
+                        has_special_actions |= action_phase.spec_actions != 0;
+                    }
                 }
 
                 // Write tx data and indices
@@ -355,7 +464,27 @@ impl PersistentStorage {
                 Ok(true)
             })?;
 
-            // TODO: Update account code hash if `has_special_actions`
+            // Update code hash
+            if let Some(accounts) = &accounts {
+                let update = if is_active && (!was_active || has_special_actions) {
+                    // Account is active after this block and this is either a new account,
+                    // or it was an existing account which possibly changed its code.
+                    // Update: just store the code hash.
+                    Some(false)
+                } else if was_active && !is_active {
+                    // Account was active before this block and is not active after the block.
+                    // Update: remove the code hash.
+                    Some(true)
+                } else {
+                    // No update for other cases
+                    None
+                };
+
+                // Apply the update if any
+                if let Some(remove) = update {
+                    self.update_code_hash(workchain, &account, accounts, remove, &mut write_batch)?;
+                }
+            }
 
             Ok(true)
         })?;
@@ -367,6 +496,157 @@ impl PersistentStorage {
                 .context("Failed to update JRPC storage")?;
         }
 
+        Ok(())
+    }
+
+    fn update_code_hash(
+        &self,
+        workchain: i8,
+        account: &UInt256,
+        accounts: &ton_block::ShardAccounts,
+        remove: bool,
+        write_batch: &mut rocksdb::WriteBatch,
+    ) -> Result<()> {
+        // Prepare column families
+        let code_hashes_cf = &self.code_hashes.cf();
+        let code_hashes_by_address_cf = &self.code_hashes_by_address.cf();
+
+        // Check the secondary index first
+        let mut code_hashes_by_address_id = [0u8; { tables::CodeHashesByAddress::KEY_LEN }];
+        code_hashes_by_address_id[0] = workchain as u8;
+        code_hashes_by_address_id[1..33].copy_from_slice(account.as_slice());
+
+        // Find the old code hash
+        let old_code_hash = self
+            .code_hashes_by_address
+            .get(code_hashes_by_address_id.as_slice())?;
+
+        // Find the new code hash
+        let new_code_hash = 'code_hash: {
+            if !remove {
+                if let Some(account) = accounts.get(account)? {
+                    break 'code_hash extract_code_hash(account)?;
+                }
+            }
+            None
+        };
+
+        if remove && old_code_hash.is_none()
+            || matches!(
+                (&old_code_hash, &new_code_hash),
+                (Some(old), Some(new)) if old.as_ref() == new.as_slice()
+            )
+        {
+            // Code hash should not be changed.
+            return Ok(());
+        }
+
+        let mut code_hashes_id = [0u8; { tables::CodeHashes::KEY_LEN }];
+        code_hashes_id[32] = workchain as u8;
+        code_hashes_id[33..65].copy_from_slice(account.as_slice());
+
+        // Remove entry from the primary index
+        if let Some(old_code_hash) = old_code_hash {
+            code_hashes_id[..32].copy_from_slice(&old_code_hash);
+            write_batch.delete_cf(code_hashes_cf, code_hashes_id.as_slice());
+        }
+
+        match new_code_hash {
+            Some(new_code_hash) => {
+                // Update primary index
+                code_hashes_id[..32].copy_from_slice(new_code_hash.as_slice());
+                write_batch.put_cf(
+                    code_hashes_cf,
+                    code_hashes_id.as_slice(),
+                    new_code_hash.as_slice(),
+                );
+
+                // Update secondary index
+                write_batch.put_cf(
+                    code_hashes_by_address_cf,
+                    code_hashes_by_address_id.as_slice(),
+                    new_code_hash.as_slice(),
+                );
+            }
+            None => {
+                // Remove entry from the secondary index
+                write_batch.delete_cf(
+                    code_hashes_by_address_cf,
+                    code_hashes_by_address_id.as_slice(),
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn remove_code_hashes(&self, shard: &ton_block::ShardIdent) -> Result<()> {
+        let workchain = shard.workchain_id() as u8;
+
+        // Remove from the secondary index first
+        {
+            let mut from = [0u8; { tables::CodeHashesByAddress::KEY_LEN }];
+            from[0] = workchain;
+
+            {
+                let [_, from @ ..] = &mut from;
+                extend_account_prefix(shard, false, from);
+            }
+
+            let mut to = from;
+            {
+                let [_, to @ ..] = &mut to;
+                extend_account_prefix(shard, true, to);
+            }
+
+            let db = self.inner.raw().as_ref();
+            let cf = &self.code_hashes_by_address.cf();
+            let writeopts = self.code_hashes_by_address.write_config();
+
+            // Remove `[from; to)`
+            db.delete_range_cf_opt(cf, &from, &to, writeopts)?;
+            // Remove `to`, (-1:ffff..ffff might be a valid existing address)
+            db.delete_cf_opt(cf, to, writeopts)?;
+        }
+
+        // Full scan the main code hashes index and remove all entires for the shard
+        let db = self.inner.raw().clone();
+        let cf = self.code_hashes.get_unbounded_cf();
+        let writeopts = self.code_hashes.new_write_config();
+        let mut readopts = self.code_hashes.new_read_config();
+
+        let shard = *shard;
+        tokio::task::spawn_blocking(move || {
+            let cf = cf.bound();
+            let snapshot = db.snapshot();
+            readopts.set_snapshot(&snapshot);
+
+            let mut iter = db.raw_iterator_cf_opt(&cf, readopts);
+            iter.seek_to_first();
+
+            let prefix = shard.shard_prefix_without_tag();
+            loop {
+                let key = match iter.key() {
+                    Some(key) => key,
+                    None => return iter.status(),
+                };
+
+                if key.len() != tables::CodeHashes::KEY_LEN
+                    || key[32] == workchain
+                        && (shard.is_full() || {
+                            let key = u64::from_be_bytes(key[33..41].try_into().unwrap());
+                            key & prefix == prefix
+                        })
+                {
+                    db.delete_cf_opt(&cf, key, &writeopts)?;
+                }
+
+                iter.next();
+            }
+        })
+        .await??;
+
+        // Done
         Ok(())
     }
 }
@@ -409,34 +689,33 @@ impl std::ops::Deref for OwnedSnapshot {
 }
 
 fn contains_account(shard: &ton_block::ShardIdent, account: &ton_types::UInt256) -> bool {
-    let shard_prefix = shard.shard_prefix_with_tag();
-    if shard_prefix == ton_block::SHARD_FULL {
-        true
-    } else {
-        let len = shard.prefix_len();
-        let account_prefix = account_prefix(account, len as usize) >> (64 - len);
-        let shard_prefix = shard_prefix >> (64 - len);
-        account_prefix == shard_prefix
+    if shard.is_full() {
+        return true;
     }
+
+    let shard_prefix = shard.shard_prefix_without_tag();
+    let account_prefix = u64::from_be_bytes(account.as_slice()[..8].try_into().unwrap());
+    account_prefix & shard_prefix == shard_prefix
 }
 
-fn account_prefix(account: &ton_types::UInt256, len: usize) -> u64 {
-    debug_assert!(len <= 64);
+fn extend_account_prefix(shard: &ton_block::ShardIdent, max: bool, target: &mut [u8; 32]) {
+    let mut prefix = shard.shard_prefix_with_tag();
+    if max {
+        prefix |= prefix - 1;
+    } else {
+        prefix -= ton_block::ShardIdent::lower_bits(prefix);
+    };
+    target[..8].copy_from_slice(&prefix.to_be_bytes());
+    target[8..].fill(0xff * max as u8);
+}
 
-    let account = account.as_slice();
-
-    let mut value: u64 = 0;
-
-    let bytes = len / 8;
-    for (i, byte) in account.iter().enumerate().take(bytes) {
-        value |= (*byte as u64) << (8 * (7 - i));
+fn extract_code_hash(account: ton_block::ShardAccount) -> Result<Option<ton_types::UInt256>> {
+    if let ton_block::Account::Account(account) = account.read_account()? {
+        if let ton_block::AccountState::AccountActive { state_init } = account.storage.state {
+            if let Some(code) = state_init.code {
+                return Ok(Some(code.repr_hash()));
+            }
+        }
     }
-
-    let remainder = len % 8;
-    if remainder > 0 {
-        let r = account[bytes] >> (8 - remainder);
-        value |= (r as u64) << (8 * (7 - bytes) + 8 - remainder);
-    }
-
-    value
+    Ok(None)
 }

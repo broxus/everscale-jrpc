@@ -112,6 +112,22 @@ pub struct GetDstTransactionRequest {
     pub message_hash: [u8; 32],
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetAccountsByCodeHashRequest {
+    #[serde(with = "serde_hex_array")]
+    pub code_hash: [u8; 32],
+
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_optional_address"
+    )]
+    pub continuation: Option<ton_block::MsgAddressInt>,
+
+    pub limit: u8,
+}
+
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetDstTransactionRequestRef<'a> {

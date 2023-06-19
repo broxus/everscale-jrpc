@@ -26,7 +26,7 @@ API.
 
 ### `getLatestKeyBlock`
 
-This methos is used to retrieve the latest key block from the Everscale. Key
+This method is used to retrieve the latest key block from the Everscale. Key
 blocks are a type of block in a blockchain that contain important information,
 such as the state of the network and the current validator set.
 
@@ -261,16 +261,17 @@ a request to the server in the following format:
   "jsonrpc": "2.0",
   "method": "getAccountsByCodeHash",
   "params": {
-    "codeHash": <hex_encoded>
+    "codeHash": <hex_encoded>,
+    "limit": <number>
   },
   "id": 1
 }
 ```
 
-`code_hash` (string) - the code hash of the contracts you want to find. This
+`codeHash` (string) - the code hash of the contracts you want to find. This
 should be a hex-encoded byte array.
 
-`limit` (number) - the maximum number of accounts to return in a single batch.
+`limit` (number) - the maximum number of accounts to return in a single batch. Max limit - 100.
 
 `continuation` (string, optional) - the last address from the previous batch, if
 you are requesting more than one batch of results. This is optional and should
@@ -318,7 +319,7 @@ const request = {
   params: {
     "codeHash": "e8801282233f38ad17fead83aeac1820e40598de98675106b0fd91d9524e9141",
     "limit": 10,
-    "continuation": "010f7a877ad90df1f7111e9431c672fc0d68714fcded79c61369765396adc802",
+    "continuation": "0:010f7a877ad90df1f7111e9431c672fc0d68714fcded79c61369765396adc802",
   },
   id: 1
 };
@@ -345,7 +346,7 @@ request = {
   "params":  {
     "codeHash": "e8801282233f38ad17fead83aeac1820e40598de98675106b0fd91d9524e9141",
     "limit": 10,
-    "continuation": "010f7a877ad90df1f7111e9431c672fc0d68714fcded79c61369765396adc802",
+    "continuation": "0:010f7a877ad90df1f7111e9431c672fc0d68714fcded79c61369765396adc802",
   },
   "id": 1
 }
