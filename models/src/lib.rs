@@ -22,32 +22,10 @@ pub struct GetContractStateRequestRef<'a> {
     pub address: &'a ton_block::MsgAddressInt,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SendMessageRequest {
-    /// Base64 encoded message
-    #[serde(with = "serde_ton_block")]
-    pub message: ton_block::Message,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlockResponse {
-    /// Base64 encoded block
-    #[serde(with = "serde_ton_block")]
-    pub block: ton_block::Block,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BlockchainConfigResponse {
-    pub global_id: i32,
-    #[serde(with = "serde_ton_block")]
-    pub config: ton_block::ConfigParams,
-}
-
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
-pub enum ContractStateResponse {
+pub enum GetContractStateResponse {
     NotExists,
     #[serde(rename_all = "camelCase")]
     Exists {
@@ -60,13 +38,111 @@ pub enum ContractStateResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SendMessageRequest {
+    /// Base64 encoded message
+    #[serde(with = "serde_ton_block")]
+    pub message: ton_block::Message,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetLatestKeyBlockResponse {
+    /// Base64 encoded block
+    #[serde(with = "serde_ton_block")]
+    pub block: ton_block::Block,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct StatusResponse {
+pub struct GetBlockchainConfigResponse {
+    pub global_id: i32,
+    #[serde(with = "serde_ton_block")]
+    pub config: ton_block::ConfigParams,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetTransactionsListRequest {
+    #[serde(with = "serde_address")]
+    pub account: ton_block::MsgAddressInt,
+
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_optional_u64"
+    )]
+    pub last_transaction_lt: Option<u64>,
+
+    pub limit: u8,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetTransactionsListRequestRef<'a> {
+    #[serde(with = "serde_address")]
+    pub account: &'a ton_block::MsgAddressInt,
+
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_optional_u64"
+    )]
+    pub last_transaction_lt: Option<u64>,
+
+    pub limit: u8,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetTransactionRequest {
+    #[serde(with = "serde_hex_array")]
+    pub id: [u8; 32],
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetTransactionRequestRef<'a> {
+    #[serde(with = "serde_hex_array")]
+    pub id: &'a [u8; 32],
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetDstTransactionRequest {
+    #[serde(with = "serde_hex_array")]
+    pub message_hash: [u8; 32],
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetAccountsByCodeHashRequest {
+    #[serde(with = "serde_hex_array")]
+    pub code_hash: [u8; 32],
+
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_optional_address"
+    )]
+    pub continuation: Option<ton_block::MsgAddressInt>,
+
+    pub limit: u8,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetDstTransactionRequestRef<'a> {
+    #[serde(with = "serde_hex_array")]
+    pub message_hash: &'a [u8; 32],
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetStatusResponse {
     pub ready: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, Eq, PartialEq)]
-pub struct EngineMetrics {
+pub struct GetTimingsResponse {
     pub last_mc_block_seqno: u32,
     pub last_shard_client_mc_block_seqno: u32,
     pub last_mc_utime: u32,
@@ -74,7 +150,7 @@ pub struct EngineMetrics {
     pub shard_client_time_diff: i64,
 }
 
-impl EngineMetrics {
+impl GetTimingsResponse {
     pub fn is_reliable(&self) -> bool {
         // just booted up
         if self == &Self::default() {
@@ -104,24 +180,17 @@ fn now() -> u64 {
         .as_secs()
 }
 
-impl PartialOrd for EngineMetrics {
+impl PartialOrd for GetTimingsResponse {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for EngineMetrics {
+impl Ord for GetTimingsResponse {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         (self.shard_client_time_diff, self.mc_time_diff)
             .cmp(&(other.shard_client_time_diff, other.mc_time_diff))
     }
-}
-
-#[derive(Serialize, Clone, Copy)]
-#[serde(rename_all = "camelCase")]
-pub struct GetTransactionRequest<'a> {
-    #[serde(with = "serde_hex_array")]
-    pub id: &'a [u8; 32],
 }
 
 #[cfg(test)]
@@ -130,7 +199,7 @@ mod test {
 
     #[test]
     fn older_than() {
-        let metrics = EngineMetrics {
+        let metrics = GetTimingsResponse {
             last_mc_block_seqno: 0,
             last_shard_client_mc_block_seqno: 0,
             last_mc_utime: now() as u32,
