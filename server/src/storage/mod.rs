@@ -624,7 +624,11 @@ impl PersistentStorage {
             let mut iter = db.raw_iterator_cf_opt(&cf, readopts);
             iter.seek_to_first();
 
-            let prefix = shard.shard_prefix_without_tag();
+            let mut prefix = shard.shard_prefix_with_tag();
+            let mut lower_bits = ton_block::ShardIdent::lower_bits(prefix);
+            prefix -= lower_bits;
+            lower_bits |= lower_bits - 1;
+
             loop {
                 let key = match iter.key() {
                     Some(key) => key,
@@ -635,7 +639,7 @@ impl PersistentStorage {
                     || key[32] == workchain
                         && (shard.is_full() || {
                             let key = u64::from_be_bytes(key[33..41].try_into().unwrap());
-                            key & prefix == prefix
+                            (key ^ prefix) & !lower_bits == 0
                         })
                 {
                     db.delete_cf_opt(&cf, key, &writeopts)?;
@@ -693,9 +697,13 @@ fn contains_account(shard: &ton_block::ShardIdent, account: &ton_types::UInt256)
         return true;
     }
 
-    let shard_prefix = shard.shard_prefix_without_tag();
+    let mut shard_prefix = shard.shard_prefix_with_tag();
+    let mut lower_bits = ton_block::ShardIdent::lower_bits(shard_prefix);
+    shard_prefix -= lower_bits;
+    lower_bits |= lower_bits - 1;
+
     let account_prefix = u64::from_be_bytes(account.as_slice()[..8].try_into().unwrap());
-    account_prefix & shard_prefix == shard_prefix
+    (account_prefix ^ shard_prefix) & !lower_bits == 0
 }
 
 fn extend_account_prefix(shard: &ton_block::ShardIdent, max: bool, target: &mut [u8; 32]) {
@@ -718,4 +726,30 @@ fn extract_code_hash(account: ton_block::ShardAccount) -> Result<Option<ton_type
         }
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn account_prefix() {
+        fn make_addr(byte: u8) -> ton_types::UInt256 {
+            ton_types::UInt256::from([byte; 32])
+        }
+
+        let (s_4, s_c) = ton_block::ShardIdent::full(0).split().unwrap();
+
+        // 0100
+        assert!(contains_account(&s_4, &make_addr(0x00)));
+        assert!(!contains_account(&s_c, &make_addr(0x00)));
+        assert!(contains_account(&s_4, &make_addr(0b01111111)));
+        assert!(!contains_account(&s_c, &make_addr(0b01111111)));
+
+        // 1100
+        assert!(!contains_account(&s_4, &make_addr(0xd1)));
+        assert!(contains_account(&s_c, &make_addr(0xd0)));
+        assert!(!contains_account(&s_4, &make_addr(0b11111111)));
+        assert!(contains_account(&s_c, &make_addr(0b11111111)));
+    }
 }
