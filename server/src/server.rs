@@ -372,7 +372,7 @@ impl JrpcServer {
         let mut key = [0u8; { tables::CodeHashes::KEY_LEN }];
         key[0..32].copy_from_slice(&req.code_hash);
         if let Some(continuation) = &req.continuation {
-            extract_address(&continuation, &mut key[32..])?;
+            extract_address(continuation, &mut key[32..])?;
         }
 
         let mut upper_bound = Vec::with_capacity(tables::CodeHashes::KEY_LEN);
@@ -585,7 +585,7 @@ impl serde::Serialize for RawStorageValue<'_> {
     where
         S: serde::Serializer,
     {
-        self.0.as_ref().serialize(serializer)
+        base64::encode(self.0.as_ref()).serialize(serializer)
     }
 }
 

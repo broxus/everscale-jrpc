@@ -352,7 +352,7 @@ impl PersistentStorage {
             code_hashes_by_address_id[1..33].copy_from_slice(id);
 
             // Write tx data and indices
-            write_batch.put_cf(code_hashes_cf, code_hashes_id.as_slice(), &[]);
+            write_batch.put_cf(code_hashes_cf, code_hashes_id.as_slice(), []);
             write_batch.put_cf(
                 code_hashes_by_address_cf,
                 code_hashes_by_address_id.as_slice(),
