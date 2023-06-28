@@ -1,0 +1,36 @@
+[package]
+name = "everscale-jrpc-node"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+argh = "0.1"
+async-trait = "0.1"
+config = { version = "0.13", default-features = false, features = ["yaml"] }
+everscale-network = "0.5.3"
+futures-util = "0.3"
+is-terminal = "0.4"
+pomfrit = "0.1"
+rand = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+broxus-util = { version = "0.2", default-features = false, features = [
+    "argh",
+    "config",
+    "signal",
+    "alloc",
+    "alloc-profiling",
+    "public-ip",
+] }
+
+ton-indexer = { git = "https://github.com/broxus/ton-indexer.git" }
+ton_block = { git = "https://github.com/broxus/ton-labs-block.git" }
+ton_types = { git = "https://github.com/broxus/ton-labs-types.git" }
+
+everscale-jrpc-server = { path = "../server" }
