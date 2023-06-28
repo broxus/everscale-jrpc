@@ -1,11 +1,6 @@
-use criterion::{criterion_group, criterion_main, Bencher, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use everscale_proto::pb;
-use nekoton::abi::LastTransactionId;
-use nekoton::transport::models::ExistingContract;
-use protobuf::{Message, MessageField};
-use std::hint::black_box;
 use ton_block::{Deserializable, Serializable};
 
 fn create_account_stuff() -> ton_block::AccountStuff {
@@ -15,133 +10,73 @@ fn create_account_stuff() -> ton_block::AccountStuff {
     }
 }
 
-#[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
-pub struct Test {
+#[derive(Debug, Clone, Eq, PartialEq, BorshSerialize, BorshDeserialize)]
+struct ExistingContract {
     pub account: Vec<u8>,
-    pub timings: TestGenTimings,
-    pub last_transaction_id: TestLastTransactionId,
+    pub timings: GenTimings,
+    pub last_transaction_id: LastTransactionId,
 }
 
-#[derive(Debug, Copy, Clone, BorshSerialize, BorshDeserialize)]
-pub enum TestGenTimings {
-    /// There is no way to determine the point in time at which this specific state was obtained
+#[derive(Debug, Copy, Clone, Eq, PartialEq, BorshSerialize, BorshDeserialize)]
+enum GenTimings {
     Unknown,
-    /// There is a known point in time at which this specific state was obtained
     Known { gen_lt: u64, gen_utime: u32 },
 }
 
-#[derive(Default, Debug, Copy, Clone, BorshSerialize, BorshDeserialize)]
-pub struct TestTransactionId {
+#[derive(Default, Debug, Copy, Clone, Eq, PartialEq, BorshSerialize, BorshDeserialize)]
+struct TransactionId {
     pub lt: u64,
     pub hash: [u8; 32],
 }
 
-#[derive(Debug, Copy, Clone, BorshSerialize, BorshDeserialize)]
-pub enum TestLastTransactionId {
-    Exact(TestTransactionId),
+#[derive(Debug, Copy, Clone, Eq, PartialEq, BorshSerialize, BorshDeserialize)]
+enum LastTransactionId {
+    Exact(TransactionId),
     Inexact { latest_lt: u64 },
 }
 
 fn serialize_borsh(bench: &mut Criterion) {
     let account = create_account_stuff();
 
-    let state = Test {
+    let contract = ExistingContract {
         account: account.write_to_bytes().unwrap(),
-        timings: TestGenTimings::Known {
+        timings: GenTimings::Known {
             gen_lt: 0,
             gen_utime: 0,
         },
-        last_transaction_id: TestLastTransactionId::Exact(TestTransactionId::default()),
+        last_transaction_id: LastTransactionId::Exact(TransactionId::default()),
     };
 
     bench.bench_function("serialize borsh", |b| {
         b.iter(|| {
-            let bytes = black_box(&state).try_to_vec().unwrap();
-            assert!(bytes.len() > 0);
+            let _contract = contract
+                .try_to_vec()
+                .expect("expected serialization to succeed");
         })
     });
 }
 
-fn serialize_account_state(bench: &mut Criterion) {
+fn deserialize_borsh(bench: &mut Criterion) {
     let account = create_account_stuff();
 
-    let state = ExistingContract {
-        account,
-        timings: Default::default(),
-        last_transaction_id: LastTransactionId::Inexact { latest_lt: 0 },
+    let contract = ExistingContract {
+        account: account.write_to_bytes().unwrap(),
+        timings: GenTimings::Known {
+            gen_lt: 0,
+            gen_utime: 0,
+        },
+        last_transaction_id: LastTransactionId::Exact(TransactionId::default()),
     };
 
-    let gen_timings = MessageField::some(pb::rpc::state_response::GenTimings {
-        ..Default::default()
-    })
-    .into();
+    let bytes = contract.try_to_vec().unwrap();
 
-    let last_transaction_id = MessageField::some(pb::rpc::state_response::LastTransactionId {
-        ..Default::default()
-    })
-    .into();
-
-    let state_response = pb::rpc::StateResponse {
-        contract_state: MessageField::some(pb::rpc::state_response::ContractState {
-            account: state.account.write_to_bytes().unwrap(),
-            gen_timings,
-            last_transaction_id,
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
-
-    bench.bench_function("serialize proto", |b| {
+    bench.bench_function("deserialize borsh", |b| {
         b.iter(|| {
-            let bytes = black_box(&state_response).write_to_bytes().unwrap();
-            assert!(bytes.len() > 0);
+            let _contract = ExistingContract::try_from_slice(&bytes)
+                .expect("expected deserialization to succeed");
         })
     });
 }
 
-fn deserialize_account_state(bench: &mut Criterion) {
-    let account = create_account_stuff();
-
-    let state = ExistingContract {
-        account,
-        timings: Default::default(),
-        last_transaction_id: LastTransactionId::Inexact { latest_lt: 0 },
-    };
-
-    let gen_timings = MessageField::some(pb::rpc::state_response::GenTimings {
-        ..Default::default()
-    })
-    .into();
-
-    let last_transaction_id = MessageField::some(pb::rpc::state_response::LastTransactionId {
-        ..Default::default()
-    })
-    .into();
-
-    let state_response = pb::rpc::StateResponse {
-        contract_state: MessageField::some(pb::rpc::state_response::ContractState {
-            account: state.account.write_to_bytes().unwrap(),
-            gen_timings,
-            last_transaction_id,
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
-
-    let bytes = state_response.write_to_bytes().unwrap();
-
-    bench.bench_function("deserialize proto", |b| {
-        b.iter(|| {
-            let response = pb::rpc::StateResponse::parse_from_bytes(black_box(&bytes)).unwrap();
-            assert_eq!(response, state_response);
-        })
-    });
-}
-
-criterion_group!(
-    benches,
-    serialize_borsh,
-    serialize_account_state,
-    deserialize_account_state
-);
+criterion_group!(benches, serialize_borsh, deserialize_borsh,);
 criterion_main!(benches);
