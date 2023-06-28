@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package rpc;
+
+message Address{
+  int32 workchain_id = 1;
+  bytes address = 2;
+}
+
+message StateRequest {
+  Address address = 1;
+}
+
+message StateResponse {
+  message GenTimings{
+    uint64 gen_lt = 1;
+    uint32 gen_utime = 2;
+
+  }
+  message LastTransactionId {
+    uint64 lt = 1;
+    bytes hash = 2;
+  }
+
+  message ContractState{
+    bytes account = 1;
+    optional GenTimings gen_timings = 2;
+    optional LastTransactionId last_transaction_id = 3;
+  }
+
+  optional ContractState contract_state = 1;
+}

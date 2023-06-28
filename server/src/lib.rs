@@ -55,6 +55,7 @@ use serde::{Deserialize, Serialize};
 use ton_indexer::utils::{BlockStuff, ShardStateStuff};
 
 pub use everscale_jrpc_models as models;
+pub use everscale_proto::pb::rpc::{StateRequest, StateResponse};
 
 use self::server::JrpcServer;
 use self::storage::{DbOptions, PersistentStorage, RuntimeStorage};
