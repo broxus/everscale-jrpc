@@ -1,12 +1,11 @@
-#[macro_use]
-extern crate bencher;
+use criterion::{criterion_group, criterion_main, Bencher, Criterion};
 
-use bencher::Bencher;
 use borsh::{BorshDeserialize, BorshSerialize};
 use everscale_proto::pb;
 use nekoton::abi::LastTransactionId;
 use nekoton::transport::models::ExistingContract;
 use protobuf::{Message, MessageField};
+use std::hint::black_box;
 use ton_block::{Deserializable, Serializable};
 
 fn create_account_stuff() -> ton_block::AccountStuff {
@@ -43,7 +42,7 @@ pub enum TestLastTransactionId {
     Inexact { latest_lt: u64 },
 }
 
-fn serialize_borsh(bench: &mut Bencher) {
+fn serialize_borsh(bench: &mut Criterion) {
     let account = create_account_stuff();
 
     let state = Test {
@@ -55,13 +54,15 @@ fn serialize_borsh(bench: &mut Bencher) {
         last_transaction_id: TestLastTransactionId::Exact(TestTransactionId::default()),
     };
 
-    bench.iter(|| {
-        let bytes = state.account.try_to_vec().unwrap();
-        assert!(bytes.len() > 0);
+    bench.bench_function("serialize borsh", |b| {
+        b.iter(|| {
+            let bytes = black_box(&state).try_to_vec().unwrap();
+            assert!(bytes.len() > 0);
+        })
     });
 }
 
-fn serialize_account_state(bench: &mut Bencher) {
+fn serialize_account_state(bench: &mut Criterion) {
     let account = create_account_stuff();
 
     let state = ExistingContract {
@@ -90,13 +91,15 @@ fn serialize_account_state(bench: &mut Bencher) {
         ..Default::default()
     };
 
-    bench.iter(|| {
-        let bytes = state_response.write_to_bytes().unwrap();
-        assert!(bytes.len() > 0);
+    bench.bench_function("serialize proto", |b| {
+        b.iter(|| {
+            let bytes = black_box(&state_response).write_to_bytes().unwrap();
+            assert!(bytes.len() > 0);
+        })
     });
 }
 
-fn deserialize_account_state(bench: &mut Bencher) {
+fn deserialize_account_state(bench: &mut Criterion) {
     let account = create_account_stuff();
 
     let state = ExistingContract {
@@ -127,16 +130,18 @@ fn deserialize_account_state(bench: &mut Bencher) {
 
     let bytes = state_response.write_to_bytes().unwrap();
 
-    bench.iter(|| {
-        let response = pb::rpc::StateResponse::parse_from_bytes(&bytes).unwrap();
-        assert_eq!(response, state_response);
+    bench.bench_function("deserialize proto", |b| {
+        b.iter(|| {
+            let response = pb::rpc::StateResponse::parse_from_bytes(black_box(&bytes)).unwrap();
+            assert_eq!(response, state_response);
+        })
     });
 }
 
-benchmark_group!(
+criterion_group!(
     benches,
+    serialize_borsh,
     serialize_account_state,
-    deserialize_account_state,
-    serialize_borsh
+    deserialize_account_state
 );
-benchmark_main!(benches);
+criterion_main!(benches);

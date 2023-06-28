@@ -16,7 +16,7 @@ client = []
 server = []
 
 [dev-dependencies]
-bencher = "0.1.5"
+criterion = "0.5.1"
 nekoton = { git = "https://github.com/broxus/nekoton.git", default-features = false }
 ton_block = { git = "https://github.com/broxus/ton-labs-block.git" }
 ton_types = { git = "https://github.com/broxus/ton-labs-types.git" }
