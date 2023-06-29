@@ -11,29 +11,7 @@ fn create_account_stuff() -> ton_block::AccountStuff {
     }
 }
 
-fn serialize_contract_state(bench: &mut Criterion) {
-    let account = create_account_stuff();
-
-    let gen_timings = rpc::state_response::contract_state::GenTimings::Unknown(Default::default());
-    let last_transaction_id =
-        rpc::state_response::contract_state::LastTransactionId::Inexact(Default::default());
-
-    let state_response = rpc::StateResponse {
-        contract_state: Some(rpc::state_response::ContractState {
-            account: account.write_to_bytes().unwrap(),
-            gen_timings: Some(gen_timings),
-            last_transaction_id: Some(last_transaction_id),
-        }),
-    };
-
-    bench.bench_function("serialize proto", |b| {
-        b.iter(|| {
-            let _encoded = state_response.encode_to_vec();
-        })
-    });
-}
-
-fn deserialize_contract_state(bench: &mut Criterion) {
+fn compress_lz4_contract_state(bench: &mut Criterion) {
     let account = create_account_stuff();
 
     let gen_timings = rpc::state_response::contract_state::GenTimings::Unknown(Default::default());
@@ -50,17 +28,167 @@ fn deserialize_contract_state(bench: &mut Criterion) {
 
     let bytes = state_response.encode_to_vec();
 
-    bench.bench_function("deserialize proto", |b| {
+    bench.bench_function("lz4 compress", |b| {
         b.iter(|| {
-            let _decoded = rpc::StateResponse::decode(bytes.as_slice())
-                .expect("expected deserialization to succeed");
+            let result = Vec::<u8>::new();
+            let mut encoder = lz4::EncoderBuilder::new()
+                .level(zstd::DEFAULT_COMPRESSION_LEVEL as u32)
+                .build(result)
+                .unwrap();
+            std::io::copy(&mut bytes.as_slice(), &mut encoder).unwrap();
+            let (compressed, result) = encoder.finish();
+            assert!(result.is_ok());
+            assert!(compressed.len() > 0);
+        })
+    });
+}
+
+fn decompress_lz4_contract_state(bench: &mut Criterion) {
+    let account = create_account_stuff();
+
+    let gen_timings = rpc::state_response::contract_state::GenTimings::Unknown(Default::default());
+    let last_transaction_id =
+        rpc::state_response::contract_state::LastTransactionId::Inexact(Default::default());
+
+    let state_response = rpc::StateResponse {
+        contract_state: Some(rpc::state_response::ContractState {
+            account: account.write_to_bytes().unwrap(),
+            gen_timings: Some(gen_timings),
+            last_transaction_id: Some(last_transaction_id),
+        }),
+    };
+
+    let bytes = state_response.encode_to_vec();
+
+    let result = Vec::<u8>::new();
+    let mut encoder = lz4::EncoderBuilder::new()
+        .level(zstd::DEFAULT_COMPRESSION_LEVEL as u32)
+        .build(result)
+        .unwrap();
+    std::io::copy(&mut bytes.as_slice(), &mut encoder).unwrap();
+    let (compressed, result) = encoder.finish();
+    assert!(result.is_ok());
+
+    bench.bench_function("lz4 decompress", |b| {
+        b.iter(|| {
+            let mut decoder = lz4::Decoder::new(&compressed[..]).unwrap();
+            let mut decompressed = Vec::new();
+            std::io::copy(&mut decoder, &mut decompressed).unwrap();
+            assert_eq!(bytes, decompressed);
+        })
+    });
+}
+
+fn compress_lz4_flex_contract_state(bench: &mut Criterion) {
+    let account = create_account_stuff();
+
+    let gen_timings = rpc::state_response::contract_state::GenTimings::Unknown(Default::default());
+    let last_transaction_id =
+        rpc::state_response::contract_state::LastTransactionId::Inexact(Default::default());
+
+    let state_response = rpc::StateResponse {
+        contract_state: Some(rpc::state_response::ContractState {
+            account: account.write_to_bytes().unwrap(),
+            gen_timings: Some(gen_timings),
+            last_transaction_id: Some(last_transaction_id),
+        }),
+    };
+
+    let bytes = state_response.encode_to_vec();
+
+    bench.bench_function("lz4_flex compress", |b| {
+        b.iter(|| {
+            let compressed = lz4_flex::compress_prepend_size(&bytes);
+            assert!(compressed.len() > 0);
+        })
+    });
+}
+
+fn decompress_lz4_flex_contract_state(bench: &mut Criterion) {
+    let account = create_account_stuff();
+
+    let gen_timings = rpc::state_response::contract_state::GenTimings::Unknown(Default::default());
+    let last_transaction_id =
+        rpc::state_response::contract_state::LastTransactionId::Inexact(Default::default());
+
+    let state_response = rpc::StateResponse {
+        contract_state: Some(rpc::state_response::ContractState {
+            account: account.write_to_bytes().unwrap(),
+            gen_timings: Some(gen_timings),
+            last_transaction_id: Some(last_transaction_id),
+        }),
+    };
+
+    let bytes = state_response.encode_to_vec();
+    let compressed = lz4_flex::compress_prepend_size(&bytes);
+
+    bench.bench_function("lz4_flex decompress", |b| {
+        b.iter(|| {
+            let decompressed = lz4_flex::decompress_size_prepended(&compressed).unwrap();
+            assert_eq!(bytes, decompressed);
+        })
+    });
+}
+
+fn compress_zstd_contract_state(bench: &mut Criterion) {
+    let account = create_account_stuff();
+
+    let gen_timings = rpc::state_response::contract_state::GenTimings::Unknown(Default::default());
+    let last_transaction_id =
+        rpc::state_response::contract_state::LastTransactionId::Inexact(Default::default());
+
+    let state_response = rpc::StateResponse {
+        contract_state: Some(rpc::state_response::ContractState {
+            account: account.write_to_bytes().unwrap(),
+            gen_timings: Some(gen_timings),
+            last_transaction_id: Some(last_transaction_id),
+        }),
+    };
+
+    let bytes = state_response.encode_to_vec();
+
+    bench.bench_function("zstd compress", |b| {
+        b.iter(|| {
+            let compressed = zstd::encode_all(&bytes[..], zstd::DEFAULT_COMPRESSION_LEVEL).unwrap();
+            assert!(compressed.len() > 0);
+        })
+    });
+}
+
+fn decompress_zstd_contract_state(bench: &mut Criterion) {
+    let account = create_account_stuff();
+
+    let gen_timings = rpc::state_response::contract_state::GenTimings::Unknown(Default::default());
+    let last_transaction_id =
+        rpc::state_response::contract_state::LastTransactionId::Inexact(Default::default());
+
+    let state_response = rpc::StateResponse {
+        contract_state: Some(rpc::state_response::ContractState {
+            account: account.write_to_bytes().unwrap(),
+            gen_timings: Some(gen_timings),
+            last_transaction_id: Some(last_transaction_id),
+        }),
+    };
+
+    let bytes = state_response.encode_to_vec();
+
+    let compressed = zstd::encode_all(&bytes[..], zstd::DEFAULT_COMPRESSION_LEVEL).unwrap();
+
+    bench.bench_function("zstd decompress", |b| {
+        b.iter(|| {
+            let uncompressed = zstd::decode_all(&compressed[..]).unwrap();
+            assert_eq!(bytes, uncompressed);
         })
     });
 }
 
 criterion_group!(
     benches,
-    serialize_contract_state,
-    deserialize_contract_state
+    compress_lz4_contract_state,
+    decompress_lz4_contract_state,
+    compress_lz4_flex_contract_state,
+    decompress_lz4_flex_contract_state,
+    compress_zstd_contract_state,
+    decompress_zstd_contract_state
 );
 criterion_main!(benches);
