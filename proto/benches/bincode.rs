@@ -41,7 +41,8 @@ fn deserialize_contract_state(bench: &mut Criterion) {
         },
     };
 
-    let bytes: Vec<u8> = bincode::serialize(&contract).expect("expected serialization to succeed");
+    let bytes = bincode::serialize(&contract).expect("expected serialization to succeed");
+    assert!(bytes.len() > 0);
 
     bench.bench_function("deserialize bincode", |b| {
         b.iter(|| {
@@ -54,6 +55,6 @@ fn deserialize_contract_state(bench: &mut Criterion) {
 criterion_group!(
     benches,
     serialize_contract_state,
-    deserialize_contract_state
+    //deserialize_contract_state
 );
 criterion_main!(benches);

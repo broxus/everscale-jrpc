@@ -1,7 +1,9 @@
+use std::io::Cursor;
+
 use criterion::{criterion_group, criterion_main, Criterion};
 
-use everscale_proto::pb;
-use protobuf::{Message, MessageField};
+use everscale_proto::rpc;
+use prost::Message;
 use ton_block::{Deserializable, Serializable};
 
 fn create_account_stuff() -> ton_block::AccountStuff {
@@ -14,24 +16,21 @@ fn create_account_stuff() -> ton_block::AccountStuff {
 fn serialize_contract_state(bench: &mut Criterion) {
     let account = create_account_stuff();
 
-    let gen_timings = MessageField::some(pb::rpc::state_response::GenTimings::default()).into();
-
+    let gen_timings = rpc::state_response::contract_state::GenTimings::Unknown(Default::default());
     let last_transaction_id =
-        MessageField::some(pb::rpc::state_response::LastTransactionId::default()).into();
+        rpc::state_response::contract_state::LastTransactionId::Inexact(Default::default());
 
-    let state_response = pb::rpc::StateResponse {
-        contract_state: MessageField::some(pb::rpc::state_response::ContractState {
+    let state_response = rpc::StateResponse {
+        contract_state: Some(rpc::state_response::ContractState {
             account: account.write_to_bytes().unwrap(),
-            gen_timings,
-            last_transaction_id,
-            ..Default::default()
+            gen_timings: Some(gen_timings),
+            last_transaction_id: Some(last_transaction_id),
         }),
-        ..Default::default()
     };
 
     bench.bench_function("serialize proto", |b| {
         b.iter(|| {
-            let _bytes = state_response.write_to_bytes().unwrap();
+            let _encoded = state_response.encode_to_vec();
         })
     });
 }
@@ -39,28 +38,23 @@ fn serialize_contract_state(bench: &mut Criterion) {
 fn deserialize_contract_state(bench: &mut Criterion) {
     let account = create_account_stuff();
 
-    let gen_timings = MessageField::some(pb::rpc::state_response::GenTimings::default()).into();
-
+    let gen_timings = rpc::state_response::contract_state::GenTimings::Unknown(Default::default());
     let last_transaction_id =
-        MessageField::some(pb::rpc::state_response::LastTransactionId::default()).into();
+        rpc::state_response::contract_state::LastTransactionId::Inexact(Default::default());
 
-    let state_response = pb::rpc::StateResponse {
-        contract_state: MessageField::some(pb::rpc::state_response::ContractState {
+    let state_response = rpc::StateResponse {
+        contract_state: Some(rpc::state_response::ContractState {
             account: account.write_to_bytes().unwrap(),
-            gen_timings,
-            last_transaction_id,
-            ..Default::default()
+            gen_timings: Some(gen_timings),
+            last_transaction_id: Some(last_transaction_id),
         }),
-        ..Default::default()
     };
 
-    let bytes = state_response
-        .write_to_bytes()
-        .expect("expected serialization to succeed");
+    let bytes = state_response.encode_to_vec();
 
     bench.bench_function("deserialize proto", |b| {
         b.iter(|| {
-            let _response = pb::rpc::StateResponse::parse_from_bytes(&bytes)
+            let _decoded = rpc::StateResponse::decode(&mut Cursor::new(&bytes))
                 .expect("expected deserialization to succeed");
         })
     });

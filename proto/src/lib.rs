@@ -1,3 +1,3 @@
-pub mod pb {
-    include!(concat!(env!("OUT_DIR"), "/proto/mod.rs"));
+pub mod rpc {
+    include!(concat!(env!("OUT_DIR"), "/rpc.rs"));
 }

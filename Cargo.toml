@@ -1,2 +1,2 @@
 [workspace]
-members = ["client", "models", "server", "proto", "wasm"]
+members = ["client", "models", "server", "proto"]

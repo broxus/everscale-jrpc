@@ -12,21 +12,35 @@ message StateRequest {
 }
 
 message StateResponse {
-  message GenTimings{
+  message Known {
     uint64 gen_lt = 1;
     uint32 gen_utime = 2;
-
   }
-  message LastTransactionId {
+
+  message Unknown {}
+
+  message Exact {
     uint64 lt = 1;
     bytes hash = 2;
   }
 
-  message ContractState{
-    bytes account = 1;
-    optional GenTimings gen_timings = 2;
-    optional LastTransactionId last_transaction_id = 3;
+  message Inexact {
+    uint64 latest_lt = 1;
   }
 
-  optional ContractState contract_state = 1;
+  message ContractState {
+    bytes account = 1;
+
+    oneof GenTimings {
+      Known known = 2;
+      Unknown unknown = 3;
+    }
+
+    oneof LastTransactionId {
+      Exact exact = 4;
+      Inexact inexact = 5;
+    }
+  }
+
+  ContractState contract_state = 1;
 }
