@@ -13,7 +13,7 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{body, BoxError, Router};
 use serde::Serialize;
-use ton_block::{Deserializable, Serializable};
+use ton_block::{Deserializable, MsgAddressInt, Serializable};
 
 use everscale_jrpc_models::*;
 
@@ -207,20 +207,16 @@ async fn rpc_router(
     match req.method() {
         Some(call) => match call {
             rpc::request::Call::GetContractState(_) => unimplemented!(),
-            rpc::request::Call::GetTransaction(_) => unimplemented!(),
-            rpc::request::Call::GetDstTransaction(_) => {
-                unimplemented!()
-            }
-            rpc::request::Call::GetTransactionsList(_) => {
-                unimplemented!()
-            }
+            rpc::request::Call::GetTransaction(p) => req.fill(ctx.get_transaction(p)),
+            rpc::request::Call::GetDstTransaction(p) => req.fill(ctx.get_dst_transaction(p)),
+            rpc::request::Call::GetTransactionsList(p) => req.fill(ctx.get_transactions_list(p)),
             rpc::request::Call::GetAccountsByCodeHash(_) => {
                 unimplemented!()
             }
             rpc::request::Call::GetStatus(_) => req.fill(ctx.get_status()),
             rpc::request::Call::GetLatestKeyBlock(_) => req.fill(ctx.get_latest_key_block()),
             rpc::request::Call::GetBlockchainConfig(_) => req.fill(ctx.get_blockchain_config()),
-            rpc::request::Call::SendMessage(param) => req.fill(ctx.send_message(param)),
+            rpc::request::Call::SendMessage(p) => req.fill(ctx.send_message(p)),
         },
         None => req.not_found(),
     }
@@ -254,6 +250,140 @@ impl RpcServer {
         }
     }
 
+    fn get_transaction(&self, req: rpc::request::GetTransaction) -> QueryResult {
+        let Some(storage) = &self.state.persistent_storage else {
+            return Err(QueryError::NotSupported);
+        };
+
+        let key = match storage.transactions_by_hash.get(req.id.as_ref()) {
+            Ok(Some(key)) => key,
+            Ok(None) => {
+                return Ok(rpc::response::Result::GetRawTransaction(
+                    rpc::response::GetRawTransaction::default(),
+                ))
+            }
+            Err(e) => {
+                tracing::error!("failed to resolve transaction by hash: {e:?}");
+                return Err(QueryError::StorageError);
+            }
+        };
+
+        match storage.transactions.get(key) {
+            Ok(res) => Ok(rpc::response::Result::GetRawTransaction(
+                rpc::response::GetRawTransaction {
+                    transaction: res.map(|slice| bytes::Bytes::from(slice.to_vec())),
+                },
+            )),
+            Err(e) => {
+                tracing::error!("failed to get transaction: {e:?}");
+                Err(QueryError::StorageError)
+            }
+        }
+    }
+
+    fn get_dst_transaction(&self, req: rpc::request::GetDstTransaction) -> QueryResult {
+        let Some(storage) = &self.state.persistent_storage else {
+            return Err(QueryError::NotSupported);
+        };
+
+        let key = match storage
+            .transactions_by_in_msg
+            .get(req.message_hash.as_ref())
+        {
+            Ok(Some(key)) => key,
+            Ok(None) => {
+                return Ok(rpc::response::Result::GetRawTransaction(
+                    rpc::response::GetRawTransaction::default(),
+                ))
+            }
+            Err(e) => {
+                tracing::error!("failed to resolve transaction by incoming message hash: {e:?}");
+                return Err(QueryError::StorageError);
+            }
+        };
+
+        match storage.transactions.get(key) {
+            Ok(res) => Ok(rpc::response::Result::GetRawTransaction(
+                rpc::response::GetRawTransaction {
+                    transaction: res.map(|slice| bytes::Bytes::from(slice.to_vec())),
+                },
+            )),
+            Err(e) => {
+                tracing::error!("failed to get transaction: {e:?}");
+                Err(QueryError::StorageError)
+            }
+        }
+    }
+
+    fn get_transactions_list(&self, req: rpc::request::GetTransactionsList) -> QueryResult {
+        use crate::storage::tables;
+
+        const MAX_LIMIT: u32 = 100;
+
+        let Some(storage) = &self.state.persistent_storage else {
+            return Err(QueryError::NotSupported);
+        };
+
+        let limit = match req.limit {
+            0 => {
+                return Ok(rpc::response::Result::GetTransactionsList(
+                    rpc::response::GetTransactionsList::default(),
+                ))
+            }
+            l if l > MAX_LIMIT => return Err(QueryError::TooBigRange),
+            l => l,
+        };
+
+        let Some(snapshot) = storage.load_snapshot() else {
+            return Err(QueryError::NotReady);
+        };
+
+        let mut key = [0u8; { crate::storage::tables::Transactions::KEY_LEN }];
+        let account = MsgAddressInt::construct_from_bytes(req.account.as_ref())
+            .map_err(|_| QueryError::InvalidParams)?;
+        extract_address(&account, &mut key).map_err(|_| QueryError::InvalidParams)?;
+        key[33..].copy_from_slice(&req.last_transaction_lt.unwrap_or(u64::MAX).to_be_bytes());
+
+        let mut lower_bound = Vec::with_capacity(tables::Transactions::KEY_LEN);
+        lower_bound.extend_from_slice(&key[..33]);
+        lower_bound.extend_from_slice(&[0; 8]);
+
+        let mut readopts = storage.transactions.new_read_config();
+        readopts.set_snapshot(&snapshot);
+        readopts.set_iterate_lower_bound(lower_bound);
+
+        let transactions_cf = storage.transactions.cf();
+        let mut iter = storage
+            .inner
+            .raw()
+            .raw_iterator_cf_opt(&transactions_cf, readopts);
+        iter.seek_for_prev(key);
+
+        let mut result = Vec::with_capacity(std::cmp::min(8, limit) as usize);
+
+        for _ in 0..limit {
+            match iter.value() {
+                Some(value) => {
+                    result.push(bytes::Bytes::copy_from_slice(value));
+                    iter.prev();
+                }
+                None => match iter.status() {
+                    Ok(()) => break,
+                    Err(e) => {
+                        tracing::error!("transactions iterator failed: {e:?}");
+                        return Err(QueryError::StorageError);
+                    }
+                },
+            }
+        }
+
+        Ok(rpc::response::Result::GetTransactionsList(
+            rpc::response::GetTransactionsList {
+                transactions: result,
+            },
+        ))
+    }
+
     fn send_message(&self, req: rpc::request::SendMessage) -> QueryResult {
         let Some(engine) = self.state.engine.load().upgrade() else {
             return Err(QueryError::NotReady);
@@ -280,6 +410,21 @@ impl RpcServer {
             rpc::response::SendMessage {},
         ))
     }
+}
+
+fn extract_address(address: &MsgAddressInt, target: &mut [u8]) -> Result<()> {
+    if let MsgAddressInt::AddrStd(address) = address {
+        let account = address.address.get_bytestring_on_stack(0);
+        let account = account.as_ref();
+
+        if target.len() >= 33 && account.len() == 32 {
+            target[0] = address.workchain_id as u8;
+            target[1..33].copy_from_slice(account);
+            return Ok(());
+        }
+    }
+
+    anyhow::bail!("Invalid address")
 }
 
 macro_rules! define_query_error {
