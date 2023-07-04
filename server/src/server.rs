@@ -13,7 +13,7 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{body, BoxError, Router};
 use serde::Serialize;
-use ton_block::{Deserializable, MsgAddressInt, Serializable};
+use ton_block::{Deserializable, Serializable};
 
 use everscale_jrpc_models::*;
 
@@ -45,12 +45,12 @@ impl RpcServer {
             let config = custom.config().context("No config found for key block")?;
 
             let key_block_response = rpc::response::GetLatestKeyBlock {
-                block: bytes::Bytes::from(block.write_to_bytes()?),
+                block: Bytes::from(block.write_to_bytes()?),
             };
 
             let config_response = rpc::response::GetBlockchainConfig {
                 global_id: block.global_id,
-                config: bytes::Bytes::from(config.write_to_bytes()?),
+                config: Bytes::from(config.write_to_bytes()?),
             };
 
             Ok((Arc::new(key_block_response), Arc::new(config_response)))
@@ -207,16 +207,16 @@ async fn rpc_router(
     match req.method() {
         Some(call) => match call {
             rpc::request::Call::GetContractState(_) => unimplemented!(),
-            rpc::request::Call::GetTransaction(p) => req.fill(ctx.get_transaction(p)),
-            rpc::request::Call::GetDstTransaction(p) => req.fill(ctx.get_dst_transaction(p)),
-            rpc::request::Call::GetTransactionsList(p) => req.fill(ctx.get_transactions_list(p)),
-            rpc::request::Call::GetAccountsByCodeHash(_) => {
-                unimplemented!()
-            }
             rpc::request::Call::GetStatus(_) => req.fill(ctx.get_status()),
             rpc::request::Call::GetLatestKeyBlock(_) => req.fill(ctx.get_latest_key_block()),
             rpc::request::Call::GetBlockchainConfig(_) => req.fill(ctx.get_blockchain_config()),
             rpc::request::Call::SendMessage(p) => req.fill(ctx.send_message(p)),
+            rpc::request::Call::GetTransaction(p) => req.fill(ctx.get_transaction(p)),
+            rpc::request::Call::GetDstTransaction(p) => req.fill(ctx.get_dst_transaction(p)),
+            rpc::request::Call::GetTransactionsList(p) => req.fill(ctx.get_transactions_list(p)),
+            rpc::request::Call::GetAccountsByCodeHash(p) => {
+                req.fill(ctx.get_accounts_by_code_hash(p))
+            }
         },
         None => req.not_found(),
     }
@@ -271,7 +271,7 @@ impl RpcServer {
         match storage.transactions.get(key) {
             Ok(res) => Ok(rpc::response::Result::GetRawTransaction(
                 rpc::response::GetRawTransaction {
-                    transaction: res.map(|slice| bytes::Bytes::from(slice.to_vec())),
+                    transaction: res.map(|slice| Bytes::from(slice.to_vec())),
                 },
             )),
             Err(e) => {
@@ -305,7 +305,7 @@ impl RpcServer {
         match storage.transactions.get(key) {
             Ok(res) => Ok(rpc::response::Result::GetRawTransaction(
                 rpc::response::GetRawTransaction {
-                    transaction: res.map(|slice| bytes::Bytes::from(slice.to_vec())),
+                    transaction: res.map(|slice| Bytes::from(slice.to_vec())),
                 },
             )),
             Err(e) => {
@@ -339,9 +339,7 @@ impl RpcServer {
         };
 
         let mut key = [0u8; { crate::storage::tables::Transactions::KEY_LEN }];
-        let account = MsgAddressInt::construct_from_bytes(req.account.as_ref())
-            .map_err(|_| QueryError::InvalidParams)?;
-        extract_address(&account, &mut key).map_err(|_| QueryError::InvalidParams)?;
+        extract_address(&req.account, &mut key).map_err(|_| QueryError::InvalidParams)?;
         key[33..].copy_from_slice(&req.last_transaction_lt.unwrap_or(u64::MAX).to_be_bytes());
 
         let mut lower_bound = Vec::with_capacity(tables::Transactions::KEY_LEN);
@@ -364,7 +362,7 @@ impl RpcServer {
         for _ in 0..limit {
             match iter.value() {
                 Some(value) => {
-                    result.push(bytes::Bytes::copy_from_slice(value));
+                    result.push(Bytes::copy_from_slice(value));
                     iter.prev();
                 }
                 None => match iter.status() {
@@ -381,6 +379,81 @@ impl RpcServer {
             rpc::response::GetTransactionsList {
                 transactions: result,
             },
+        ))
+    }
+
+    fn get_accounts_by_code_hash(&self, req: rpc::request::GetAccountsByCodeHash) -> QueryResult {
+        use crate::storage::tables;
+
+        const MAX_LIMIT: u32 = 100;
+
+        let Some(storage) = &self.state.persistent_storage else {
+            return Err(QueryError::NotSupported);
+        };
+
+        let limit = match req.limit {
+            0 => {
+                return Ok(rpc::response::Result::GetTransactionsList(
+                    rpc::response::GetTransactionsList::default(),
+                ))
+            }
+            l if l > MAX_LIMIT => return Err(QueryError::TooBigRange),
+            l => l,
+        };
+
+        let Some(snapshot) = storage.load_snapshot() else {
+            return Err(QueryError::NotReady);
+        };
+
+        let mut key = [0u8; { tables::CodeHashes::KEY_LEN }];
+        key[0..32].copy_from_slice(&req.code_hash);
+        if let Some(continuation) = &req.continuation {
+            extract_address(continuation, &mut key[32..]).map_err(|_| QueryError::InvalidParams)?;
+        }
+
+        let mut upper_bound = Vec::with_capacity(tables::CodeHashes::KEY_LEN);
+        upper_bound.extend_from_slice(&key[..32]);
+        upper_bound.extend_from_slice(&[0xff; 33]);
+
+        let mut readopts = storage.code_hashes.new_read_config();
+        readopts.set_snapshot(&snapshot);
+        readopts.set_iterate_upper_bound(upper_bound); // NOTE: somehow make the range inclusive
+
+        let code_hashes_cf = storage.code_hashes.cf();
+        let mut iter = storage
+            .inner
+            .raw()
+            .raw_iterator_cf_opt(&code_hashes_cf, readopts);
+
+        iter.seek(key);
+        if req.continuation.is_some() {
+            iter.next();
+        }
+
+        let mut result = Vec::with_capacity(std::cmp::min(8, limit) as usize);
+
+        for _ in 0..limit {
+            let Some(value) = iter.key() else{
+                match iter.status() {
+                    Ok(()) => break,
+                    Err(e) => {
+                        tracing::error!("code hashes iterator failed: {e:?}");
+                        return Err(QueryError::StorageError);
+                    }
+                }
+            };
+
+            if value.len() != tables::CodeHashes::KEY_LEN {
+                tracing::error!("parsing address from key failed: invalid value");
+                return Err(QueryError::StorageError);
+            }
+
+            result.push(Bytes::copy_from_slice(&value[32..]));
+            iter.next();
+        }
+
+        Ok(rpc::response::Result::GetAccounts(
+            rpc::response::GetAccountsByCodeHash { account: result },
         ))
     }
 
@@ -412,16 +485,11 @@ impl RpcServer {
     }
 }
 
-fn extract_address(address: &MsgAddressInt, target: &mut [u8]) -> Result<()> {
-    if let MsgAddressInt::AddrStd(address) = address {
-        let account = address.address.get_bytestring_on_stack(0);
-        let account = account.as_ref();
-
-        if target.len() >= 33 && account.len() == 32 {
-            target[0] = address.workchain_id as u8;
-            target[1..33].copy_from_slice(account);
-            return Ok(());
-        }
+fn extract_address(address: &Bytes, target: &mut [u8]) -> Result<()> {
+    if target.len() >= 33 && address.len() == 33 {
+        target[0] = address[0];
+        target[0..33].copy_from_slice(address.as_ref());
+        return Ok(());
     }
 
     anyhow::bail!("Invalid address")

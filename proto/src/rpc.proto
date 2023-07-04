@@ -88,6 +88,10 @@ message Response {
 
   message SendMessage {}
 
+  message GetAccountsByCodeHash {
+    repeated bytes account= 1;
+  }
+
   message GetContractState {
     message ContractState {
       message Known {
@@ -125,14 +129,15 @@ message Response {
   int64 id = 1;
 
   oneof Result {
-    GetRawTransaction   get_raw_transaction   = 2;
-    GetTransactionsList get_transactions_list = 3;
-    GetTimings          get_timings           = 4;
-    GetStatus           get_status            = 5;
-    GetCapabilities     get_capabilities      = 6;
-    GetLatestKeyBlock   get_latest_key_block  = 7;
-    GetBlockchainConfig  get_blockchain_config  = 8;
-    GetContractState    get_contract_state    = 9;
-    SendMessage         send_message          = 10;
+    GetRawTransaction       get_raw_transaction     = 2;
+    GetTransactionsList     get_transactions_list   = 3;
+    GetTimings              get_timings             = 4;
+    GetStatus               get_status              = 5;
+    GetCapabilities         get_capabilities        = 6;
+    GetLatestKeyBlock       get_latest_key_block    = 7;
+    GetBlockchainConfig     get_blockchain_config   = 8;
+    GetAccountsByCodeHash   get_accounts            = 9;
+    GetContractState        get_contract_state      = 10;
+    SendMessage             send_message            = 11;
   }
 }
