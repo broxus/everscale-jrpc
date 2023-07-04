@@ -9,6 +9,7 @@ arc-swap = { version = "1.6", features = ["weak"] }
 axum = { version = "0.6.0", features = ["http2"] }
 axum-jrpc = { version = "0.5.1", features = ["serde_json"] }
 base64 = "0.13"
+bytes = "1.4"
 fdlimit = "0.2.1"
 hex = "0.4"
 num_cpus = "1.13.1"

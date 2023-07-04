@@ -7,14 +7,14 @@
 //! use everscale_jrpc_server::*;
 //! use async_trait::async_trait;
 //! struct ExampleSubscriber {
-//!     jrpc_state: Arc<JrpcState>,
+//!     rpc_state: Arc<RpcState>,
 //! }
 //!
 //! #[async_trait]
 //! impl ton_indexer::Subscriber for ExampleSubscriber {
 //!     async fn process_block(&self, ctx: ton_indexer::ProcessBlockContext<'_>) -> Result<()> {
 //!         if let Some(shard_state) = ctx.shard_state_stuff() {
-//!             self.jrpc_state.handle_block(ctx.block_stuff(), shard_state)?;
+//!             self.rpc_state.handle_block(ctx.block_stuff(), shard_state)?;
 //!         }
 //!         Ok(())
 //!     }
@@ -25,17 +25,17 @@
 //!     global_config: ton_indexer::GlobalConfig,
 //!     listen_address: std::net::SocketAddr,
 //! ) -> Result<()> {
-//!     let jrpc_state = Arc::new(JrpcState::new(None));
+//!     let rpc_state = Arc::new(RpcState::new(None));
 //!     let subscriber: Arc<dyn ton_indexer::Subscriber> = Arc::new(ExampleSubscriber {
-//!         jrpc_state: jrpc_state.clone(),
+//!         rpc_state: rpc_state.clone(),
 //!     });
 //!
 //!     let engine = ton_indexer::Engine::new(config, global_config, vec![subscriber]).await?;
 //!
 //!     engine.start().await?;
 //!
-//!     let jrpc = JrpcServer::with_state(jrpc_state).build(&engine, listen_address).await?;
-//!     tokio::spawn(jrpc);
+//!     let rpc = RpcServer::with_state(rpc_state).build(&engine, listen_address).await?;
+//!     tokio::spawn(rpc);
 //!
 //!     // ...
 //!
@@ -56,7 +56,7 @@ use ton_indexer::utils::{BlockStuff, ShardStateStuff};
 
 pub use everscale_jrpc_models as models;
 
-use self::server::JrpcServer;
+use self::server::RpcServer;
 use self::storage::{DbOptions, PersistentStorage, RuntimeStorage};
 
 mod server;
@@ -112,7 +112,7 @@ impl ApiConfig {
     }
 }
 
-pub struct JrpcState {
+pub struct RpcState {
     config: Config,
     engine: ArcSwapWeak<ton_indexer::Engine>,
     runtime_storage: RuntimeStorage,
@@ -120,7 +120,7 @@ pub struct JrpcState {
     counters: Counters,
 }
 
-impl JrpcState {
+impl RpcState {
     pub fn new(config: Config) -> Result<Self> {
         let persistent_storage = match &config.api_config {
             ApiConfig::Simple(..) => None,
@@ -165,10 +165,10 @@ impl JrpcState {
     }
 
     pub fn serve(self: Arc<Self>) -> Result<impl Future<Output = ()> + Send + 'static> {
-        JrpcServer::new(self)?.serve()
+        RpcServer::new(self)?.serve()
     }
 
-    pub fn metrics(&self) -> JrpcMetrics {
+    pub fn metrics(&self) -> RpcMetrics {
         self.counters.metrics()
     }
 
@@ -252,8 +252,8 @@ impl Counters {
         self.errors.fetch_add(1, Ordering::Relaxed);
     }
 
-    fn metrics(&self) -> JrpcMetrics {
-        JrpcMetrics {
+    fn metrics(&self) -> RpcMetrics {
+        RpcMetrics {
             total: self.total.load(Ordering::Relaxed),
             not_found: self.not_found.load(Ordering::Relaxed),
             errors: self.errors.load(Ordering::Relaxed),
@@ -262,8 +262,8 @@ impl Counters {
 }
 
 #[derive(Default, Copy, Clone)]
-pub struct JrpcMetrics {
-    /// Total amount JRPC requests
+pub struct RpcMetrics {
+    /// Total amount RPC requests
     pub total: u64,
     /// Number of requests resolved with an error
     pub not_found: u64,
