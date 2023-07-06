@@ -39,19 +39,17 @@ message Request {
     bytes message = 1;
   }
 
-  int64 id = 1;
-
   oneof Call {
-    GetCapabilities        get_capabilities           = 2;
-    GetContractState       get_contract_state         = 3;
-    GetTransaction         get_transaction            = 4;
-    GetDstTransaction      get_dst_transaction        = 5;
-    GetTransactionsList    get_transactions_list      = 6;
-    GetAccountsByCodeHash  get_accounts_by_code_hash  = 7;
-    GetStatus              get_status                 = 8;
-    GetLatestKeyBlock      get_latest_key_block       = 9;
-    GetBlockchainConfig    get_blockchain_config      = 10;
-    SendMessage            send_message               = 11;
+    GetCapabilities        get_capabilities           = 1;
+    GetContractState       get_contract_state         = 2;
+    GetTransaction         get_transaction            = 3;
+    GetDstTransaction      get_dst_transaction        = 4;
+    GetTransactionsList    get_transactions_list      = 5;
+    GetAccountsByCodeHash  get_accounts_by_code_hash  = 6;
+    GetStatus              get_status                 = 7;
+    GetLatestKeyBlock      get_latest_key_block       = 8;
+    GetBlockchainConfig    get_blockchain_config      = 9;
+    SendMessage            send_message               = 10;
   }
 }
 
@@ -129,18 +127,16 @@ message Response {
     optional ContractState contract_state = 1;
   }
 
-  int64 id = 1;
-
   oneof Result {
-    GetRawTransaction       get_raw_transaction     = 2;
-    GetTransactionsList     get_transactions_list   = 3;
-    GetTimings              get_timings             = 4;
-    GetStatus               get_status              = 5;
-    GetCapabilities         get_capabilities        = 6;
-    GetLatestKeyBlock       get_latest_key_block    = 7;
-    GetBlockchainConfig     get_blockchain_config   = 8;
-    GetAccountsByCodeHash   get_accounts            = 9;
-    GetContractState        get_contract_state      = 10;
-    SendMessage             send_message            = 11;
+    GetRawTransaction       get_raw_transaction     = 1;
+    GetTransactionsList     get_transactions_list   = 2;
+    GetTimings              get_timings             = 3;
+    GetStatus               get_status              = 4;
+    GetCapabilities         get_capabilities        = 5;
+    GetLatestKeyBlock       get_latest_key_block    = 6;
+    GetBlockchainConfig     get_blockchain_config   = 7;
+    GetAccountsByCodeHash   get_accounts            = 8;
+    GetContractState        get_contract_state      = 9;
+    SendMessage             send_message            = 10;
   }
 }

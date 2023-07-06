@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -11,6 +12,7 @@ use axum::BoxError;
 use bytes::Bytes;
 use everscale_proto::prost::Message;
 use everscale_proto::rpc;
+use serde::Serialize;
 use ton_block::Serializable;
 
 use crate::server::Server;
@@ -151,23 +153,20 @@ pub async fn proto_router(
             match &res {
                 Ok(result) => {
                     let response = rpc::Response {
-                        id: self.req.id,
                         result: Some(result.clone()),
                     };
                     (StatusCode::OK, Protobuf(response)).into_response()
                 }
                 Err(e) => {
                     self.counters.increase_errors();
-                    (*e).with_id(self.req.id).into_response()
+                    (*e).without_id().into_response()
                 }
             }
         }
 
         fn not_found(self) -> axum::response::Response {
             self.counters.increase_not_found();
-            QueryError::MethodNotFound
-                .with_id(self.req.id)
-                .into_response()
+            QueryError::MethodNotFound.without_id().into_response()
         }
     }
 
@@ -276,5 +275,50 @@ where
             HeaderValue::from_static("application/x-protobuf"),
         );
         res
+    }
+}
+
+pub struct ProtoError<'a> {
+    code: i32,
+    message: Cow<'a, str>,
+}
+
+impl<'a> ProtoError<'a> {
+    pub fn new(code: i32, message: Cow<'a, str>) -> Self {
+        Self { code, message }
+    }
+}
+
+impl IntoResponse for ProtoError<'_> {
+    fn into_response(self) -> axum::response::Response {
+        axum::Json(self).into_response()
+    }
+}
+
+impl serde::Serialize for ProtoError<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        #[derive(Serialize)]
+        struct Helper<'a> {
+            error: ErrorHelper<'a>,
+        }
+
+        #[derive(Serialize)]
+        struct ErrorHelper<'a> {
+            code: i32,
+            message: &'a str,
+            data: (),
+        }
+
+        Helper {
+            error: ErrorHelper {
+                code: self.code,
+                message: self.message.as_ref(),
+                data: (),
+            },
+        }
+        .serialize(serializer)
     }
 }
