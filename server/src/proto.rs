@@ -19,7 +19,7 @@ use ton_block::{Deserializable, MsgAddressInt, Serializable};
 
 use crate::server::Server;
 use crate::storage::ShardAccountFromCache;
-use crate::utils::{QueryError, QueryResult};
+use crate::utils::{self, QueryError, QueryResult};
 use crate::{Counters, ServerState};
 
 pub struct ProtoServer {
@@ -174,24 +174,6 @@ pub async fn proto_router(
     }
 
     let mut req = Request::new(req, ctx.state().counters());
-
-    /*match req.method() {
-        "getCapabilities" => req.fill(ctx.jrpc().get_capabilities()),
-        "getLatestKeyBlock" => req.fill(ctx.jrpc().get_latest_key_block()),
-        "getBlockchainConfig" => req.fill(ctx.jrpc().get_blockchain_config()),
-        "getStatus" => req.fill(ctx.jrpc().get_status()),
-        "getTimings" => req.fill(ctx.jrpc().get_timings()),
-        "getContractState" => req.fill_with_params(|req| ctx.jrpc().get_contract_state(req)),
-        "getAccountsByCodeHash" => {
-            req.fill_with_params(|req| ctx.jrpc().get_accounts_by_code_hash(req))
-        }
-        "sendMessage" => req.fill_with_params(|req| ctx.jrpc().send_message(req)),
-        "getTransactionsList" => req.fill_with_params(|req| ctx.jrpc().get_transactions_list(req)),
-        "getTransaction" => req.fill_with_params(|req| ctx.jrpc().get_transaction(req)),
-        "getDstTransaction" => req.fill_with_params(|req| ctx.jrpc().get_dst_transaction(req)),
-        _ => req.not_found(),
-    }*/
-
     match req.method() {
         Some(call) => match call {
             rpc::request::Call::GetCapabilities(_) => req.fill(ctx.proto().get_capabilities()),
@@ -206,15 +188,17 @@ pub async fn proto_router(
             rpc::request::Call::GetContractState(param) => {
                 req.fill(ctx.proto().get_contract_state(param))
             }
-            _ => unimplemented!(),
-            /*rpc::request::Call::SendMessage(p) => req.fill(ctx.send_message(p)),
-            rpc::request::Call::GetTransaction(p) => req.fill(ctx.get_transaction(p)),
-            rpc::request::Call::GetDstTransaction(p) => req.fill(ctx.get_dst_transaction(p)),
-            rpc::request::Call::GetTransactionsList(p) => req.fill(ctx.get_transactions_list(p)),
-            rpc::request::Call::GetContractState(_) => unimplemented!(),
             rpc::request::Call::GetAccountsByCodeHash(p) => {
-                req.fill(ctx.get_accounts_by_code_hash(p))
-            }*/
+                req.fill(ctx.proto().get_accounts_by_code_hash(p))
+            }
+            rpc::request::Call::SendMessage(p) => req.fill(ctx.proto().send_message(p)),
+            rpc::request::Call::GetTransactionsList(p) => {
+                req.fill(ctx.proto().get_transactions_list(p))
+            }
+            rpc::request::Call::GetTransaction(p) => req.fill(ctx.proto().get_transaction(p)),
+            rpc::request::Call::GetDstTransaction(p) => {
+                req.fill(ctx.proto().get_dst_transaction(p))
+            }
         },
         None => req.not_found(),
     }
@@ -277,7 +261,7 @@ impl ProtoServer {
         &self,
         req: rpc::request::GetContractState,
     ) -> QueryResult<rpc::response::Result> {
-        let account = parse_address(req.address)?;
+        let account = parse_address(&req.address)?;
 
         let state = match self.state.runtime_storage.get_contract_state(&account) {
             Ok(ShardAccountFromCache::Found(state)) => state,
@@ -351,20 +335,269 @@ impl ProtoServer {
 
         Ok(result)
     }
+
+    fn get_accounts_by_code_hash(
+        &self,
+        req: rpc::request::GetAccountsByCodeHash,
+    ) -> QueryResult<rpc::response::Result> {
+        use crate::storage::tables;
+
+        const MAX_LIMIT: u32 = 100;
+
+        let Some(storage) = &self.state.persistent_storage else {
+            return Err(QueryError::NotSupported);
+        };
+
+        let limit = match req.limit {
+            0 => {
+                return Ok(rpc::response::Result::GetTransactionsList(
+                    rpc::response::GetTransactionsList::default(),
+                ))
+            }
+            l if l > MAX_LIMIT => return Err(QueryError::TooBigRange),
+            l => l,
+        };
+
+        let Some(snapshot) = storage.load_snapshot() else {
+            return Err(QueryError::NotReady);
+        };
+
+        let mut key = [0u8; { tables::CodeHashes::KEY_LEN }];
+        key[0..32].copy_from_slice(&req.code_hash);
+        if let Some(continuation) = &req.continuation {
+            let address = parse_address(&continuation)?;
+            utils::extract_address(&address, &mut key[32..])
+                .map_err(|_| QueryError::InvalidParams)?;
+        }
+
+        let mut upper_bound = Vec::with_capacity(tables::CodeHashes::KEY_LEN);
+        upper_bound.extend_from_slice(&key[..32]);
+        upper_bound.extend_from_slice(&[0xff; 33]);
+
+        let mut readopts = storage.code_hashes.new_read_config();
+        readopts.set_snapshot(&snapshot);
+        readopts.set_iterate_upper_bound(upper_bound); // NOTE: somehow make the range inclusive
+
+        let code_hashes_cf = storage.code_hashes.cf();
+        let mut iter = storage
+            .inner
+            .raw()
+            .raw_iterator_cf_opt(&code_hashes_cf, readopts);
+
+        iter.seek(key);
+        if req.continuation.is_some() {
+            iter.next();
+        }
+
+        let mut result = Vec::with_capacity(std::cmp::min(8, limit) as usize);
+
+        for _ in 0..limit {
+            let Some(value) = iter.key() else{
+                match iter.status() {
+                    Ok(()) => break,
+                    Err(e) => {
+                        tracing::error!("code hashes iterator failed: {e:?}");
+                        return Err(QueryError::StorageError);
+                    }
+                }
+            };
+
+            if value.len() != tables::CodeHashes::KEY_LEN {
+                tracing::error!("parsing address from key failed: invalid value");
+                return Err(QueryError::StorageError);
+            }
+
+            result.push(Bytes::copy_from_slice(&value[32..]));
+            iter.next();
+        }
+
+        Ok(rpc::response::Result::GetAccounts(
+            rpc::response::GetAccountsByCodeHash { account: result },
+        ))
+    }
+
+    fn send_message(&self, req: rpc::request::SendMessage) -> QueryResult<rpc::response::Result> {
+        let Some(engine) = self.state.engine.load().upgrade() else {
+            return Err(QueryError::NotReady);
+        };
+
+        let message = ton_block::Message::construct_from_bytes(req.message.as_ref())
+            .map_err(|_| QueryError::InvalidParams)?;
+
+        let to = match message.header() {
+            ton_block::CommonMsgInfo::ExtInMsgInfo(header) => header.dst.workchain_id(),
+            _ => return Err(QueryError::InvalidMessage),
+        };
+
+        let data = message
+            .serialize()
+            .and_then(|cell| ton_types::serialize_toc(&cell))
+            .map_err(|_| QueryError::FailedToSerialize)?;
+
+        engine
+            .broadcast_external_message(to, &data)
+            .map_err(|_| QueryError::ConnectionError)?;
+
+        Ok(rpc::response::Result::SendMessage(
+            rpc::response::SendMessage {},
+        ))
+    }
+
+    fn get_transactions_list(
+        &self,
+        req: rpc::request::GetTransactionsList,
+    ) -> QueryResult<rpc::response::Result> {
+        use crate::storage::tables;
+
+        const MAX_LIMIT: u32 = 100;
+
+        let Some(storage) = &self.state.persistent_storage else {
+            return Err(QueryError::NotSupported);
+        };
+
+        let limit = match req.limit {
+            0 => {
+                return Ok(rpc::response::Result::GetTransactionsList(
+                    rpc::response::GetTransactionsList::default(),
+                ))
+            }
+            l if l > MAX_LIMIT => return Err(QueryError::TooBigRange),
+            l => l,
+        };
+
+        let Some(snapshot) = storage.load_snapshot() else {
+            return Err(QueryError::NotReady);
+        };
+
+        let mut key = [0u8; { crate::storage::tables::Transactions::KEY_LEN }];
+        let address = parse_address(&req.account)?;
+        utils::extract_address(&address, &mut key).map_err(|_| QueryError::InvalidParams)?;
+        key[33..].copy_from_slice(&req.last_transaction_lt.unwrap_or(u64::MAX).to_be_bytes());
+
+        let mut lower_bound = Vec::with_capacity(tables::Transactions::KEY_LEN);
+        lower_bound.extend_from_slice(&key[..33]);
+        lower_bound.extend_from_slice(&[0; 8]);
+
+        let mut readopts = storage.transactions.new_read_config();
+        readopts.set_snapshot(&snapshot);
+        readopts.set_iterate_lower_bound(lower_bound);
+
+        let transactions_cf = storage.transactions.cf();
+        let mut iter = storage
+            .inner
+            .raw()
+            .raw_iterator_cf_opt(&transactions_cf, readopts);
+        iter.seek_for_prev(key);
+
+        let mut result = Vec::with_capacity(std::cmp::min(8, limit) as usize);
+
+        for _ in 0..limit {
+            match iter.value() {
+                Some(value) => {
+                    result.push(Bytes::copy_from_slice(value));
+                    iter.prev();
+                }
+                None => match iter.status() {
+                    Ok(()) => break,
+                    Err(e) => {
+                        tracing::error!("transactions iterator failed: {e:?}");
+                        return Err(QueryError::StorageError);
+                    }
+                },
+            }
+        }
+
+        Ok(rpc::response::Result::GetTransactionsList(
+            rpc::response::GetTransactionsList {
+                transactions: result,
+            },
+        ))
+    }
+
+    fn get_transaction(
+        &self,
+        req: rpc::request::GetTransaction,
+    ) -> QueryResult<rpc::response::Result> {
+        let Some(storage) = &self.state.persistent_storage else {
+            return Err(QueryError::NotSupported);
+        };
+
+        let key = match storage.transactions_by_hash.get(req.id.as_ref()) {
+            Ok(Some(key)) => key,
+            Ok(None) => {
+                return Ok(rpc::response::Result::GetRawTransaction(
+                    rpc::response::GetRawTransaction::default(),
+                ))
+            }
+            Err(e) => {
+                tracing::error!("failed to resolve transaction by hash: {e:?}");
+                return Err(QueryError::StorageError);
+            }
+        };
+
+        match storage.transactions.get(key) {
+            Ok(res) => Ok(rpc::response::Result::GetRawTransaction(
+                rpc::response::GetRawTransaction {
+                    transaction: res.map(|slice| Bytes::from(slice.to_vec())),
+                },
+            )),
+            Err(e) => {
+                tracing::error!("failed to get transaction: {e:?}");
+                Err(QueryError::StorageError)
+            }
+        }
+    }
+
+    fn get_dst_transaction(
+        &self,
+        req: rpc::request::GetDstTransaction,
+    ) -> QueryResult<rpc::response::Result> {
+        let Some(storage) = &self.state.persistent_storage else {
+            return Err(QueryError::NotSupported);
+        };
+
+        let key = match storage
+            .transactions_by_in_msg
+            .get(req.message_hash.as_ref())
+        {
+            Ok(Some(key)) => key,
+            Ok(None) => {
+                return Ok(rpc::response::Result::GetRawTransaction(
+                    rpc::response::GetRawTransaction::default(),
+                ))
+            }
+            Err(e) => {
+                tracing::error!("failed to resolve transaction by incoming message hash: {e:?}");
+                return Err(QueryError::StorageError);
+            }
+        };
+
+        match storage.transactions.get(key) {
+            Ok(res) => Ok(rpc::response::Result::GetRawTransaction(
+                rpc::response::GetRawTransaction {
+                    transaction: res.map(|slice| Bytes::from(slice.to_vec())),
+                },
+            )),
+            Err(e) => {
+                tracing::error!("failed to get transaction: {e:?}");
+                Err(QueryError::StorageError)
+            }
+        }
+    }
 }
 
-fn parse_address(bytes: Bytes) -> QueryResult<MsgAddressInt> {
+fn parse_address(bytes: &Bytes) -> QueryResult<MsgAddressInt> {
     if bytes.len() == 33 {
         let workchain_id = bytes[0] as i8;
         let address =
             ton_types::AccountId::from(<[u8; 32]>::try_from(&bytes[1..33]).map_err(|e| {
-                tracing::error!("failed to deserialize account: {e:?}");
-                QueryError::FailedToDeserialize
+                tracing::error!("failed to parse account: {e:?}");
+                QueryError::InvalidParams
             })?);
 
         return MsgAddressInt::with_standart(None, workchain_id, address).map_err(|e| {
             tracing::error!("failed to construct account: {e:?}");
-            QueryError::FailedToSerialize
+            QueryError::InvalidParams
         });
     }
 

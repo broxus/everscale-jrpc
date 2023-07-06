@@ -30,10 +30,9 @@ define_query_error!(QueryError, {
     ConnectionError => (-32003, "Connection error"),
     StorageError => (-32004, "Storage error"),
     FailedToSerialize => (-32005, "Failed to serialize"),
-    FailedToDeserialize => (-32006, "Failed to deserialize"),
-    InvalidAccountState => (-32007, "Invalid account state"),
-    InvalidMessage => (-32008, "Invalid message"),
-    TooBigRange => (-32009, "Too big range"),
+    InvalidAccountState => (-32006, "Invalid account state"),
+    InvalidMessage => (-32007, "Invalid message"),
+    TooBigRange => (-32008, "Too big range"),
 });
 
 impl QueryError {
