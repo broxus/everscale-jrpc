@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -12,10 +13,12 @@ use axum::BoxError;
 use bytes::Bytes;
 use everscale_proto::prost::Message;
 use everscale_proto::rpc;
+use nekoton_abi::LastTransactionId;
 use serde::Serialize;
-use ton_block::Serializable;
+use ton_block::{Deserializable, MsgAddressInt, Serializable};
 
 use crate::server::Server;
+use crate::storage::ShardAccountFromCache;
 use crate::utils::{QueryError, QueryResult};
 use crate::{Counters, ServerState};
 
@@ -172,15 +175,36 @@ pub async fn proto_router(
 
     let mut req = Request::new(req, ctx.state().counters());
 
+    /*match req.method() {
+        "getCapabilities" => req.fill(ctx.jrpc().get_capabilities()),
+        "getLatestKeyBlock" => req.fill(ctx.jrpc().get_latest_key_block()),
+        "getBlockchainConfig" => req.fill(ctx.jrpc().get_blockchain_config()),
+        "getStatus" => req.fill(ctx.jrpc().get_status()),
+        "getTimings" => req.fill(ctx.jrpc().get_timings()),
+        "getContractState" => req.fill_with_params(|req| ctx.jrpc().get_contract_state(req)),
+        "getAccountsByCodeHash" => {
+            req.fill_with_params(|req| ctx.jrpc().get_accounts_by_code_hash(req))
+        }
+        "sendMessage" => req.fill_with_params(|req| ctx.jrpc().send_message(req)),
+        "getTransactionsList" => req.fill_with_params(|req| ctx.jrpc().get_transactions_list(req)),
+        "getTransaction" => req.fill_with_params(|req| ctx.jrpc().get_transaction(req)),
+        "getDstTransaction" => req.fill_with_params(|req| ctx.jrpc().get_dst_transaction(req)),
+        _ => req.not_found(),
+    }*/
+
     match req.method() {
         Some(call) => match call {
-            rpc::request::Call::GetStatus(_) => req.fill(ctx.proto().get_status()),
             rpc::request::Call::GetCapabilities(_) => req.fill(ctx.proto().get_capabilities()),
             rpc::request::Call::GetLatestKeyBlock(_) => {
                 req.fill(ctx.proto().get_latest_key_block())
             }
             rpc::request::Call::GetBlockchainConfig(_) => {
                 req.fill(ctx.proto().get_blockchain_config())
+            }
+            rpc::request::Call::GetStatus(_) => req.fill(ctx.proto().get_status()),
+            rpc::request::Call::GetTimings(_) => req.fill(ctx.proto().get_timings()),
+            rpc::request::Call::GetContractState(param) => {
+                req.fill(ctx.proto().get_contract_state(param))
             }
             _ => unimplemented!(),
             /*rpc::request::Call::SendMessage(p) => req.fill(ctx.send_message(p)),
@@ -205,12 +229,6 @@ impl ProtoServer {
         ))
     }
 
-    fn get_status(&self) -> QueryResult<rpc::response::Result> {
-        Ok(rpc::response::Result::GetStatus(rpc::response::GetStatus {
-            ready: self.state.is_ready(),
-        }))
-    }
-
     fn get_latest_key_block(&self) -> QueryResult<rpc::response::Result> {
         // TODO: generate stub key block from zerostate
         match self.key_block_response.load_full() {
@@ -229,6 +247,128 @@ impl ProtoServer {
             None => Err(QueryError::NotReady),
         }
     }
+
+    fn get_status(&self) -> QueryResult<rpc::response::Result> {
+        Ok(rpc::response::Result::GetStatus(rpc::response::GetStatus {
+            ready: self.state.is_ready(),
+        }))
+    }
+
+    fn get_timings(&self) -> QueryResult<rpc::response::Result> {
+        let Some(engine) = self.state.engine.load().upgrade() else {
+            return Err(QueryError::NotReady);
+        };
+        let metrics = engine.metrics().as_ref();
+
+        Ok(rpc::response::Result::GetTimings(
+            rpc::response::GetTimings {
+                last_mc_block_seqno: metrics.last_mc_block_seqno.load(Ordering::Acquire),
+                last_shard_client_mc_block_seqno: metrics
+                    .last_shard_client_mc_block_seqno
+                    .load(Ordering::Acquire),
+                last_mc_utime: metrics.last_mc_utime.load(Ordering::Acquire),
+                mc_time_diff: metrics.mc_time_diff.load(Ordering::Acquire),
+                shard_client_time_diff: metrics.shard_client_time_diff.load(Ordering::Acquire),
+            },
+        ))
+    }
+
+    fn get_contract_state(
+        &self,
+        req: rpc::request::GetContractState,
+    ) -> QueryResult<rpc::response::Result> {
+        let account = parse_address(req.address)?;
+
+        let state = match self.state.runtime_storage.get_contract_state(&account) {
+            Ok(ShardAccountFromCache::Found(state)) => state,
+            Ok(ShardAccountFromCache::NotFound) => {
+                return Ok(rpc::response::Result::GetContractState(
+                    rpc::response::GetContractState::default(),
+                ))
+            }
+            Ok(ShardAccountFromCache::NotReady) => {
+                return Err(QueryError::NotReady);
+            }
+            Err(e) => {
+                tracing::error!("failed to read shard account: {e:?}");
+                return Err(QueryError::InvalidAccountState);
+            }
+        };
+
+        let guard = state.state_handle;
+
+        let account = match ton_block::Account::construct_from_cell(state.data) {
+            Ok(ton_block::Account::Account(account)) => account,
+            Ok(ton_block::Account::AccountNone) => {
+                return Ok(rpc::response::Result::GetContractState(
+                    rpc::response::GetContractState::default(),
+                ))
+            }
+            Err(e) => {
+                tracing::error!("failed to deserialize account: {e:?}");
+                return Err(QueryError::InvalidAccountState);
+            }
+        };
+
+        let account = bytes::Bytes::from(account.write_to_bytes().map_err(|e| {
+            tracing::error!("failed to serialize account: {e:?}");
+            QueryError::FailedToSerialize
+        })?);
+
+        // NOTE: state guard must be dropped after the serialization
+        drop(guard);
+
+        let gen_timings = rpc::response::get_contract_state::contract_state::GenTimings::Known(
+            rpc::response::get_contract_state::contract_state::Known {
+                gen_lt: state.last_transaction_id.lt(),
+                gen_utime: state.gen_utime,
+            },
+        );
+
+        let last_transaction_id = match state.last_transaction_id {
+            LastTransactionId::Exact(transaction_id) => {
+                rpc::response::get_contract_state::contract_state::LastTransactionId::Exact(
+                    rpc::response::get_contract_state::contract_state::Exact {
+                        lt: transaction_id.lt,
+                        hash: bytes::Bytes::copy_from_slice(transaction_id.hash.as_slice()),
+                    },
+                )
+            }
+            LastTransactionId::Inexact { latest_lt } => {
+                rpc::response::get_contract_state::contract_state::LastTransactionId::Inexact(
+                    rpc::response::get_contract_state::contract_state::Inexact { latest_lt },
+                )
+            }
+        };
+
+        let result = rpc::response::Result::GetContractState(rpc::response::GetContractState {
+            contract_state: Some(rpc::response::get_contract_state::ContractState {
+                account,
+                gen_timings: Some(gen_timings),
+                last_transaction_id: Some(last_transaction_id),
+            }),
+        });
+
+        Ok(result)
+    }
+}
+
+fn parse_address(bytes: Bytes) -> QueryResult<MsgAddressInt> {
+    if bytes.len() == 33 {
+        let workchain_id = bytes[0] as i8;
+        let address =
+            ton_types::AccountId::from(<[u8; 32]>::try_from(&bytes[1..33]).map_err(|e| {
+                tracing::error!("failed to deserialize account: {e:?}");
+                QueryError::FailedToDeserialize
+            })?);
+
+        return MsgAddressInt::with_standart(None, workchain_id, address).map_err(|e| {
+            tracing::error!("failed to construct account: {e:?}");
+            QueryError::FailedToSerialize
+        });
+    }
+
+    Err(QueryError::InvalidParams)
 }
 
 pub struct Protobuf<T>(pub T);

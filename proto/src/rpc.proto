@@ -29,6 +29,8 @@ message Request {
 
   message GetStatus {}
 
+  message GetTimings {}
+
   message GetAccountsByCodeHash {
     bytes           code_hash     = 1;
     optional bytes  continuation  = 2;
@@ -41,15 +43,17 @@ message Request {
 
   oneof Call {
     GetCapabilities        get_capabilities           = 1;
-    GetContractState       get_contract_state         = 2;
-    GetTransaction         get_transaction            = 3;
-    GetDstTransaction      get_dst_transaction        = 4;
-    GetTransactionsList    get_transactions_list      = 5;
-    GetAccountsByCodeHash  get_accounts_by_code_hash  = 6;
-    GetStatus              get_status                 = 7;
-    GetLatestKeyBlock      get_latest_key_block       = 8;
-    GetBlockchainConfig    get_blockchain_config      = 9;
-    SendMessage            send_message               = 10;
+    GetLatestKeyBlock      get_latest_key_block       = 2;
+    GetBlockchainConfig    get_blockchain_config      = 3;
+    GetStatus              get_status                 = 4;
+    GetTimings             get_timings                = 5;
+    GetContractState       get_contract_state         = 6;
+
+    GetTransaction         get_transaction            = 7;
+    GetDstTransaction      get_dst_transaction        = 8;
+    GetTransactionsList    get_transactions_list      = 9;
+    GetAccountsByCodeHash  get_accounts_by_code_hash  = 10;
+    SendMessage            send_message               = 11;
   }
 }
 
