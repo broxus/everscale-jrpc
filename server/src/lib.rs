@@ -56,11 +56,14 @@ use ton_indexer::utils::{BlockStuff, ShardStateStuff};
 
 pub use everscale_jrpc_models as models;
 
-use self::server::JrpcServer;
+use self::server::Server;
 use self::storage::{DbOptions, PersistentStorage, RuntimeStorage};
 
+mod jrpc;
+mod proto;
 mod server;
 mod storage;
+mod utils;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -114,7 +117,7 @@ impl ApiConfig {
     }
 }
 
-pub struct JrpcState {
+pub struct ServerState {
     config: Config,
     engine: ArcSwapWeak<ton_indexer::Engine>,
     runtime_storage: RuntimeStorage,
@@ -122,7 +125,7 @@ pub struct JrpcState {
     counters: Counters,
 }
 
-impl JrpcState {
+impl ServerState {
     pub fn new(config: Config) -> Result<Self> {
         let persistent_storage = match &config.api_config {
             ApiConfig::Simple(..) => None,
@@ -169,7 +172,7 @@ impl JrpcState {
     }
 
     pub fn serve(self: Arc<Self>) -> Result<impl Future<Output = ()> + Send + 'static> {
-        JrpcServer::new(self)?.serve()
+        Server::new(self)?.serve()
     }
 
     pub fn metrics(&self) -> JrpcMetrics {
