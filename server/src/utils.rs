@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use ton_block::MsgAddressInt;
 
 use crate::jrpc::JrpcError;
 
@@ -41,3 +42,18 @@ impl QueryError {
 }
 
 pub type QueryResult<T> = Result<T, QueryError>;
+
+pub fn extract_address(address: &MsgAddressInt, target: &mut [u8]) -> QueryResult<()> {
+    if let MsgAddressInt::AddrStd(address) = address {
+        let account = address.address.get_bytestring_on_stack(0);
+        let account = account.as_ref();
+
+        if target.len() >= 33 && account.len() == 32 {
+            target[0] = address.workchain_id as u8;
+            target[1..33].copy_from_slice(account);
+            return Ok(());
+        }
+    }
+
+    Err(QueryError::InvalidParams)
+}

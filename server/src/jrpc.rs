@@ -11,9 +11,9 @@ use ton_block::{Deserializable, Serializable};
 
 use everscale_jrpc_models::*;
 
-use crate::server::{extract_address, Server};
+use crate::server::Server;
 use crate::storage::ShardAccountFromCache;
-use crate::utils::{QueryError, QueryResult};
+use crate::utils::{self, QueryError, QueryResult};
 use crate::{Counters, ServerState};
 
 pub struct JrpcServer {
@@ -317,7 +317,7 @@ impl JrpcServer {
         let mut key = [0u8; { tables::CodeHashes::KEY_LEN }];
         key[0..32].copy_from_slice(&req.code_hash);
         if let Some(continuation) = &req.continuation {
-            extract_address(continuation, &mut key[32..])?;
+            utils::extract_address(continuation, &mut key[32..])?;
         }
 
         let mut upper_bound = Vec::with_capacity(tables::CodeHashes::KEY_LEN);
@@ -405,7 +405,7 @@ impl JrpcServer {
         };
 
         let mut key = [0u8; { crate::storage::tables::Transactions::KEY_LEN }];
-        extract_address(&req.account, &mut key)?;
+        utils::extract_address(&req.account, &mut key)?;
         key[33..].copy_from_slice(&req.last_transaction_lt.unwrap_or(u64::MAX).to_be_bytes());
 
         let mut lower_bound = Vec::with_capacity(tables::Transactions::KEY_LEN);

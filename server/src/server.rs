@@ -5,11 +5,9 @@ use std::time::Duration;
 use anyhow::Result;
 use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
-use ton_block::MsgAddressInt;
 
 use crate::jrpc;
 use crate::proto;
-use crate::utils::{QueryError, QueryResult};
 use crate::ServerState;
 
 pub struct Server {
@@ -93,19 +91,4 @@ async fn health_check() -> impl axum::response::IntoResponse {
         .expect("system time before Unix epoch")
         .as_millis()
         .to_string()
-}
-
-pub fn extract_address(address: &MsgAddressInt, target: &mut [u8]) -> QueryResult<()> {
-    if let MsgAddressInt::AddrStd(address) = address {
-        let account = address.address.get_bytestring_on_stack(0);
-        let account = account.as_ref();
-
-        if target.len() >= 33 && account.len() == 32 {
-            target[0] = address.workchain_id as u8;
-            target[1..33].copy_from_slice(account);
-            return Ok(());
-        }
-    }
-
-    Err(QueryError::InvalidParams)
 }
