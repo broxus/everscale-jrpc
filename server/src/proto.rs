@@ -176,15 +176,15 @@ pub async fn proto_router(
     let mut req = Request::new(req, ctx.state().proto_counters());
     match req.method() {
         Some(call) => match call {
-            rpc::request::Call::GetCapabilities(_) => req.fill(ctx.proto().get_capabilities()),
-            rpc::request::Call::GetLatestKeyBlock(_) => {
+            rpc::request::Call::GetCapabilities(()) => req.fill(ctx.proto().get_capabilities()),
+            rpc::request::Call::GetLatestKeyBlock(()) => {
                 req.fill(ctx.proto().get_latest_key_block())
             }
-            rpc::request::Call::GetBlockchainConfig(_) => {
+            rpc::request::Call::GetBlockchainConfig(()) => {
                 req.fill(ctx.proto().get_blockchain_config())
             }
-            rpc::request::Call::GetStatus(_) => req.fill(ctx.proto().get_status()),
-            rpc::request::Call::GetTimings(_) => req.fill(ctx.proto().get_timings()),
+            rpc::request::Call::GetStatus(()) => req.fill(ctx.proto().get_status()),
+            rpc::request::Call::GetTimings(()) => req.fill(ctx.proto().get_timings()),
             rpc::request::Call::GetContractState(param) => {
                 req.fill(ctx.proto().get_contract_state(param))
             }
@@ -438,9 +438,7 @@ impl ProtoServer {
             .broadcast_external_message(to, &data)
             .map_err(|_| QueryError::ConnectionError)?;
 
-        Ok(rpc::response::Result::SendMessage(
-            rpc::response::SendMessage {},
-        ))
+        Ok(rpc::response::Result::SendMessage(()))
     }
 
     fn get_transactions_list(

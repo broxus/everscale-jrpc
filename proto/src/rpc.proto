@@ -1,5 +1,7 @@
 syntax = "proto3";
 
+import "google/protobuf/empty.proto";
+
 package rpc;
 
 message Request {
@@ -21,16 +23,6 @@ message Request {
     uint32          limit               = 3;
   }
 
-  message GetCapabilities {}
-
-  message GetLatestKeyBlock {}
-
-  message GetBlockchainConfig {}
-
-  message GetStatus {}
-
-  message GetTimings {}
-
   message GetAccountsByCodeHash {
     bytes           code_hash     = 1;
     optional bytes  continuation  = 2;
@@ -42,11 +34,11 @@ message Request {
   }
 
   oneof Call {
-    GetCapabilities        get_capabilities           = 1;
-    GetLatestKeyBlock      get_latest_key_block       = 2;
-    GetBlockchainConfig    get_blockchain_config      = 3;
-    GetStatus              get_status                 = 4;
-    GetTimings             get_timings                = 5;
+    google.protobuf.Empty  get_capabilities           = 1;
+    google.protobuf.Empty  get_latest_key_block       = 2;
+    google.protobuf.Empty  get_blockchain_config      = 3;
+    google.protobuf.Empty  get_status                 = 4;
+    google.protobuf.Empty  get_timings                = 5;
     GetContractState       get_contract_state         = 6;
 
     GetTransaction         get_transaction            = 7;
@@ -91,8 +83,6 @@ message Response {
     bytes config     = 2;
   }
 
-  message SendMessage {}
-
   message GetAccountsByCodeHash {
     repeated bytes account= 1;
   }
@@ -103,8 +93,6 @@ message Response {
         uint64  gen_lt     = 1;
         uint32  gen_utime  = 2;
       }
-
-      message Unknown {}
 
       message Exact {
         uint64  lt    = 1;
@@ -118,8 +106,8 @@ message Response {
       bytes account = 1;
 
       oneof GenTimings {
-        Known   known   = 2;
-        Unknown unknown = 3;
+        Known                 known   = 2;
+        google.protobuf.Empty unknown = 3;
       }
 
       oneof LastTransactionId {
@@ -141,6 +129,6 @@ message Response {
     GetBlockchainConfig     get_blockchain_config   = 7;
     GetAccountsByCodeHash   get_accounts            = 8;
     GetContractState        get_contract_state      = 9;
-    SendMessage             send_message            = 10;
+    google.protobuf.Empty   send_message            = 10;
   }
 }
