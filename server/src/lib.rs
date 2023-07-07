@@ -122,7 +122,8 @@ pub struct ServerState {
     engine: ArcSwapWeak<ton_indexer::Engine>,
     runtime_storage: RuntimeStorage,
     persistent_storage: Option<PersistentStorage>,
-    counters: Counters,
+    jrpc_counters: Counters,
+    proto_counters: Counters,
 }
 
 impl ServerState {
@@ -146,7 +147,8 @@ impl ServerState {
             engine: Default::default(),
             runtime_storage: Default::default(),
             persistent_storage,
-            counters: Default::default(),
+            jrpc_counters: Default::default(),
+            proto_counters: Default::default(),
         })
     }
 
@@ -175,8 +177,12 @@ impl ServerState {
         Server::new(self)?.serve()
     }
 
-    pub fn metrics(&self) -> JrpcMetrics {
-        self.counters.metrics()
+    pub fn jrpc_metrics(&self) -> Metrics {
+        self.jrpc_counters.metrics()
+    }
+
+    pub fn proto_metrics(&self) -> Metrics {
+        self.proto_counters.metrics()
     }
 
     pub fn process_blocks_edge(&self) {
@@ -234,8 +240,12 @@ impl ServerState {
         self.engine.load().strong_count() > 0
     }
 
-    pub(crate) fn counters(&self) -> &Counters {
-        &self.counters
+    pub(crate) fn jrpc_counters(&self) -> &Counters {
+        &self.jrpc_counters
+    }
+
+    pub(crate) fn proto_counters(&self) -> &Counters {
+        &self.proto_counters
     }
 }
 
@@ -259,8 +269,8 @@ impl Counters {
         self.errors.fetch_add(1, Ordering::Relaxed);
     }
 
-    fn metrics(&self) -> JrpcMetrics {
-        JrpcMetrics {
+    fn metrics(&self) -> Metrics {
+        Metrics {
             total: self.total.load(Ordering::Relaxed),
             not_found: self.not_found.load(Ordering::Relaxed),
             errors: self.errors.load(Ordering::Relaxed),
@@ -269,8 +279,8 @@ impl Counters {
 }
 
 #[derive(Default, Copy, Clone)]
-pub struct JrpcMetrics {
-    /// Total amount JRPC requests
+pub struct Metrics {
+    /// Total amount requests
     pub total: u64,
     /// Number of requests resolved with an error
     pub not_found: u64,

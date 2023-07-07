@@ -257,10 +257,15 @@ impl std::fmt::Display for ExplorerMetrics<'_> {
 
         f.begin_metric("jrpc_enabled").value(1)?;
 
-        let jrpc = self.server_state.metrics();
+        let jrpc = self.server_state.jrpc_metrics();
         f.begin_metric("jrpc_total").value(jrpc.total)?;
         f.begin_metric("jrpc_errors").value(jrpc.errors)?;
         f.begin_metric("jrpc_not_found").value(jrpc.not_found)?;
+
+        let proto = self.server_state.proto_metrics();
+        f.begin_metric("proto_total").value(proto.total)?;
+        f.begin_metric("proto_errors").value(proto.errors)?;
+        f.begin_metric("proto_not_found").value(proto.not_found)?;
 
         Ok(())
     }

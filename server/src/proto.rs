@@ -173,7 +173,7 @@ pub async fn proto_router(
         }
     }
 
-    let mut req = Request::new(req, ctx.state().counters());
+    let mut req = Request::new(req, ctx.state().proto_counters());
     match req.method() {
         Some(call) => match call {
             rpc::request::Call::GetCapabilities(_) => req.fill(ctx.proto().get_capabilities()),

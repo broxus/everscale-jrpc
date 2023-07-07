@@ -182,7 +182,7 @@ pub async fn jrpc_router(
         }
     }
 
-    let req = Request::new(req, ctx.state().counters());
+    let req = Request::new(req, ctx.state().jrpc_counters());
     match req.method() {
         "getCapabilities" => req.fill(ctx.jrpc().get_capabilities()),
         "getLatestKeyBlock" => req.fill(ctx.jrpc().get_latest_key_block()),
