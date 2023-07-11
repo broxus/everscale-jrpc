@@ -20,9 +20,10 @@ use ton_block::{
     Transaction,
 };
 
-use everscale_jrpc_models::*;
 use itertools::Itertools;
 use ton_types::UInt256;
+
+use everscale_rpc_models::jrpc;
 
 static ROUND_ROBIN_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -109,10 +110,10 @@ impl JrpcClient {
         &self,
         address: &MsgAddressInt,
     ) -> Result<Option<ExistingContract>> {
-        let req = GetContractStateRequestRef { address };
+        let req = jrpc::GetContractStateRequestRef { address };
         match self.request("getContractState", req).await?.into_inner() {
-            GetContractStateResponse::NotExists => Ok(None),
-            GetContractStateResponse::Exists {
+            jrpc::GetContractStateResponse::NotExists => Ok(None),
+            jrpc::GetContractStateResponse::Exists {
                 account,
                 timings,
                 last_transaction_id,
@@ -151,14 +152,14 @@ impl JrpcClient {
         address: &MsgAddressInt,
         time: u32,
     ) -> Result<Option<ExistingContract>, RunError> {
-        let req = GetContractStateRequestRef { address };
+        let req = jrpc::GetContractStateRequestRef { address };
         let response = self.request("getContractState", req).await?;
         match response.result {
-            GetContractStateResponse::NotExists => {
+            jrpc::GetContractStateResponse::NotExists => {
                 response.has_state_for(time)?;
                 Ok(None)
             }
-            GetContractStateResponse::Exists {
+            jrpc::GetContractStateResponse::Exists {
                 account,
                 timings,
                 last_transaction_id,
@@ -205,7 +206,7 @@ impl JrpcClient {
             }
             CommonMsgInfo::ExtInMsgInfo(_) => {}
         }
-        let req = SendMessageRequest { message };
+        let req = jrpc::SendMessageRequest { message };
         self.request("sendMessage", req).await.map(|x| x.result)
     }
 
@@ -322,7 +323,7 @@ impl JrpcClient {
         executor.run(message)
     }
 
-    pub async fn get_latest_key_block(&self) -> Result<GetLatestKeyBlockResponse, RunError> {
+    pub async fn get_latest_key_block(&self) -> Result<jrpc::GetLatestKeyBlockResponse, RunError> {
         self.request("getLatestKeyBlock", ())
             .await
             .map(|x| x.result)
@@ -346,7 +347,7 @@ impl JrpcClient {
 
     pub async fn get_dst_transaction(&self, message_hash: &[u8]) -> Result<Option<Transaction>> {
         let message_hash = message_hash.try_into().context("Invalid message hash")?;
-        let req = GetDstTransactionRequest { message_hash };
+        let req = jrpc::GetDstTransactionRequest { message_hash };
         let result: Vec<u8> = match self.request("getDstTransaction", req).await?.into_inner() {
             Some(s) => base64::decode::<String>(s)?,
             None => return Ok(None),
@@ -361,8 +362,8 @@ impl JrpcClient {
         limit: u8,
         account: &MsgAddressInt,
         last_transaction_lt: Option<u64>,
-    ) -> Result<Vec<ton_block::Transaction>> {
-        let request = GetTransactionsListRequestRef {
+    ) -> Result<Vec<Transaction>> {
+        let request = jrpc::GetTransactionsListRequestRef {
             account,
             limit,
             last_transaction_lt,
@@ -384,7 +385,7 @@ impl JrpcClient {
         if !self.is_capable_of_message_tracking {
             anyhow::bail!("This method is not supported by light nodes")
         }
-        let request = GetTransactionRequestRef {
+        let request = jrpc::GetTransactionRequestRef {
             id: tx_hash.as_slice(),
         };
 
@@ -450,7 +451,7 @@ impl JrpcClient {
 
 pub struct Answer<D> {
     result: D,
-    node_stats: Option<GetTimingsResponse>,
+    node_stats: Option<jrpc::GetTimingsResponse>,
 }
 
 impl<D> Answer<D>
@@ -644,7 +645,7 @@ struct JrpcConnection {
     endpoint: Arc<String>,
     client: reqwest::Client,
     was_dead: Arc<AtomicBool>,
-    stats: Arc<Mutex<Option<GetTimingsResponse>>>,
+    stats: Arc<Mutex<Option<jrpc::GetTimingsResponse>>>,
 }
 
 impl PartialEq<Self> for JrpcConnection {
@@ -740,11 +741,11 @@ impl JrpcConnection {
 
         match result.result {
             JsonRpcAnswer::Result(v) => {
-                let timings: Result<GetTimingsResponse, _> = serde_json::from_value(v);
+                let timings: Result<jrpc::GetTimingsResponse, _> = serde_json::from_value(v);
                 if let Ok(t) = timings {
                     let is_reliable = t.is_reliable();
                     if !is_reliable {
-                        let GetTimingsResponse {
+                        let jrpc::GetTimingsResponse {
                             last_mc_block_seqno,
                             last_shard_client_mc_block_seqno,
                             mc_time_diff,
@@ -810,18 +811,18 @@ impl JrpcConnection {
         Ok(res)
     }
 
-    fn get_stats(&self) -> Option<GetTimingsResponse> {
+    fn get_stats(&self) -> Option<jrpc::GetTimingsResponse> {
         self.stats.lock().clone()
     }
 
-    fn set_stats(&self, stats: Option<GetTimingsResponse>) {
+    fn set_stats(&self, stats: Option<jrpc::GetTimingsResponse>) {
         *self.stats.lock() = stats;
     }
 }
 
 enum LiveCheckResult {
     /// GetTimings request was successful
-    Live(GetTimingsResponse),
+    Live(jrpc::GetTimingsResponse),
     /// Keyblock request was successful, but getTimings failed
     Dummy,
     Dead,

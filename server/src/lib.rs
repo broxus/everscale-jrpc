@@ -54,7 +54,7 @@ use arc_swap::ArcSwapWeak;
 use serde::{Deserialize, Serialize};
 use ton_indexer::utils::{BlockStuff, ShardStateStuff};
 
-pub use everscale_jrpc_models as models;
+pub use everscale_rpc_models as models;
 
 use self::server::Server;
 use self::storage::{DbOptions, PersistentStorage, RuntimeStorage};

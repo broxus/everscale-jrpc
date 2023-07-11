@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use argh::FromArgs;
-use everscale_jrpc_server::ServerState;
+use everscale_rpc_server::ServerState;
 use is_terminal::IsTerminal;
 use pomfrit::formatter::*;
 use ton_indexer::Engine;

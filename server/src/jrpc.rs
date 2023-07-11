@@ -9,7 +9,7 @@ use axum::response::IntoResponse;
 use serde::Serialize;
 use ton_block::{Deserializable, Serializable};
 
-use everscale_jrpc_models::*;
+use everscale_rpc_models::jrpc;
 
 use crate::server::Server;
 use crate::storage::ShardAccountFromCache;
@@ -59,10 +59,10 @@ impl JrpcServer {
                 .context("No custom found for key block")?;
             let config = custom.config().context("No config found for key block")?;
 
-            let key_block_response = serde_json::to_value(GetLatestKeyBlockResponse {
+            let key_block_response = serde_json::to_value(jrpc::GetLatestKeyBlockResponse {
                 block: block.clone(),
             })?;
-            let config_response = serde_json::to_value(GetBlockchainConfigResponse {
+            let config_response = serde_json::to_value(jrpc::GetBlockchainConfigResponse {
                 global_id: block.global_id,
                 config: config.clone(),
             })?;
@@ -223,19 +223,19 @@ impl JrpcServer {
         }
     }
 
-    fn get_status(&self) -> QueryResult<GetStatusResponse> {
-        Ok(GetStatusResponse {
+    fn get_status(&self) -> QueryResult<jrpc::GetStatusResponse> {
+        Ok(jrpc::GetStatusResponse {
             ready: self.state.is_ready(),
         })
     }
 
-    fn get_timings(&self) -> QueryResult<GetTimingsResponse> {
+    fn get_timings(&self) -> QueryResult<jrpc::GetTimingsResponse> {
         let Some(engine) = self.state.engine.load().upgrade() else {
             return Err(QueryError::NotReady);
         };
         let metrics = engine.metrics().as_ref();
 
-        Ok(GetTimingsResponse {
+        Ok(jrpc::GetTimingsResponse {
             last_mc_block_seqno: metrics.last_mc_block_seqno.load(Ordering::Acquire),
             last_shard_client_mc_block_seqno: metrics
                 .last_shard_client_mc_block_seqno
@@ -246,11 +246,16 @@ impl JrpcServer {
         })
     }
 
-    fn get_contract_state(&self, req: &GetContractStateRequest) -> QueryResult<serde_json::Value> {
+    fn get_contract_state(
+        &self,
+        req: &jrpc::GetContractStateRequest,
+    ) -> QueryResult<serde_json::Value> {
         let state = match self.state.runtime_storage.get_contract_state(&req.address) {
             Ok(ShardAccountFromCache::Found(state)) => state,
             Ok(ShardAccountFromCache::NotFound) => {
-                return Ok(serde_json::to_value(GetContractStateResponse::NotExists).unwrap());
+                return Ok(
+                    serde_json::to_value(jrpc::GetContractStateResponse::NotExists).unwrap(),
+                );
             }
             Ok(ShardAccountFromCache::NotReady) => {
                 return Err(QueryError::NotReady);
@@ -266,7 +271,7 @@ impl JrpcServer {
         let account = match ton_block::Account::construct_from_cell(state.data) {
             Ok(ton_block::Account::Account(account)) => account,
             Ok(ton_block::Account::AccountNone) => {
-                return Ok(serde_json::to_value(GetContractStateResponse::NotExists).unwrap())
+                return Ok(serde_json::to_value(jrpc::GetContractStateResponse::NotExists).unwrap())
             }
             Err(e) => {
                 tracing::error!("failed to deserialize account: {e:?}");
@@ -274,7 +279,7 @@ impl JrpcServer {
             }
         };
 
-        let result = serde_json::to_value(GetContractStateResponse::Exists {
+        let result = serde_json::to_value(jrpc::GetContractStateResponse::Exists {
             account,
             timings: nekoton_abi::GenTimings::Known {
                 gen_lt: state.last_transaction_id.lt(),
@@ -294,7 +299,7 @@ impl JrpcServer {
 
     fn get_accounts_by_code_hash(
         &self,
-        req: &GetAccountsByCodeHashRequest,
+        req: &jrpc::GetAccountsByCodeHashRequest,
     ) -> QueryResult<Vec<String>> {
         use crate::storage::tables;
 
@@ -364,7 +369,7 @@ impl JrpcServer {
         Ok(result)
     }
 
-    fn send_message(&self, req: &SendMessageRequest) -> QueryResult<()> {
+    fn send_message(&self, req: &jrpc::SendMessageRequest) -> QueryResult<()> {
         let Some(engine) = self.state.engine.load().upgrade() else {
             return Err(QueryError::NotReady);
         };
@@ -385,7 +390,10 @@ impl JrpcServer {
             .map_err(|_| QueryError::ConnectionError)
     }
 
-    fn get_transactions_list(&self, req: &GetTransactionsListRequest) -> QueryResult<Vec<String>> {
+    fn get_transactions_list(
+        &self,
+        req: &jrpc::GetTransactionsListRequest,
+    ) -> QueryResult<Vec<String>> {
         use crate::storage::tables;
 
         const MAX_LIMIT: u8 = 100;
@@ -444,7 +452,10 @@ impl JrpcServer {
         Ok(result)
     }
 
-    fn get_transaction(&self, req: &GetTransactionRequest) -> QueryResult<Option<RawStorageValue>> {
+    fn get_transaction(
+        &self,
+        req: &jrpc::GetTransactionRequest,
+    ) -> QueryResult<Option<RawStorageValue>> {
         let Some(storage) = &self.state.persistent_storage else {
             return Err(QueryError::NotSupported);
         };
@@ -469,7 +480,7 @@ impl JrpcServer {
 
     fn get_dst_transaction(
         &self,
-        req: &GetDstTransactionRequest,
+        req: &jrpc::GetDstTransactionRequest,
     ) -> QueryResult<Option<RawStorageValue>> {
         let Some(storage) = &self.state.persistent_storage else {
             return Err(QueryError::NotSupported);

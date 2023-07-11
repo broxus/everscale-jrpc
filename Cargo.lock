@@ -1047,46 +1047,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "everscale-jrpc-client"
-version = "0.5.0"
-dependencies = [
- "anyhow",
- "base64 0.13.1",
- "ed25519-dalek 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "everscale-jrpc-models",
- "everscale-proto",
- "futures",
- "hex",
- "itertools",
- "nekoton",
- "nekoton-abi",
- "nekoton-utils",
- "parking_lot",
- "rand 0.8.5",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "ton_abi",
- "ton_block",
- "ton_executor",
- "ton_types",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "everscale-jrpc-models"
-version = "0.1.0"
-dependencies = [
- "nekoton-abi",
- "nekoton-utils",
- "serde",
- "ton_block",
-]
-
-[[package]]
 name = "everscale-jrpc-node"
 version = "0.1.1"
 dependencies = [
@@ -1095,8 +1055,8 @@ dependencies = [
  "async-trait",
  "broxus-util",
  "config",
- "everscale-jrpc-server",
  "everscale-network",
+ "everscale-rpc-server",
  "futures-util",
  "is-terminal",
  "pomfrit",
@@ -1110,40 +1070,6 @@ dependencies = [
  "ton_types",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "everscale-jrpc-server"
-version = "0.2.2"
-dependencies = [
- "anyhow",
- "arc-swap",
- "async-trait",
- "axum",
- "axum-jrpc",
- "base64 0.13.1",
- "bytes",
- "everscale-jrpc-models",
- "everscale-proto",
- "fdlimit",
- "hex",
- "humantime",
- "nekoton-abi",
- "num_cpus",
- "parking_lot",
- "rlimit",
- "rustc-hash",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "ton-indexer",
- "ton_block",
- "ton_types",
- "tower",
- "tower-http",
- "tracing",
- "weedb",
 ]
 
 [[package]]
@@ -1188,7 +1114,7 @@ dependencies = [
  "bincode",
  "borsh",
  "criterion",
- "everscale-jrpc-models",
+ "everscale-rpc-models",
  "lz4",
  "lz4_flex",
  "nekoton",
@@ -1208,6 +1134,81 @@ name = "everscale-raptorq"
 version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "719e7eca52068b4712789379ef850e5c08b3316bccab5be12d1cb9fcb323a57c"
+
+[[package]]
+name = "everscale-rpc-client"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.13.1",
+ "ed25519-dalek 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "everscale-proto",
+ "everscale-rpc-models",
+ "futures",
+ "hex",
+ "itertools",
+ "nekoton",
+ "nekoton-abi",
+ "nekoton-utils",
+ "parking_lot",
+ "rand 0.8.5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "ton_abi",
+ "ton_block",
+ "ton_executor",
+ "ton_types",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "everscale-rpc-models"
+version = "0.1.0"
+dependencies = [
+ "nekoton-abi",
+ "nekoton-utils",
+ "serde",
+ "ton_block",
+]
+
+[[package]]
+name = "everscale-rpc-server"
+version = "0.2.2"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "async-trait",
+ "axum",
+ "axum-jrpc",
+ "base64 0.13.1",
+ "bytes",
+ "everscale-proto",
+ "everscale-rpc-models",
+ "fdlimit",
+ "hex",
+ "humantime",
+ "nekoton-abi",
+ "num_cpus",
+ "parking_lot",
+ "rlimit",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "ton-indexer",
+ "ton_block",
+ "ton_types",
+ "tower",
+ "tower-http",
+ "tracing",
+ "weedb",
+]
 
 [[package]]
 name = "fastrand"

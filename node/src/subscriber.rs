@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use everscale_jrpc_server::ServerState;
+use everscale_rpc_server::ServerState;
 use ton_indexer::utils::ShardStateStuff;
 use ton_indexer::ProcessBlockContext;
 

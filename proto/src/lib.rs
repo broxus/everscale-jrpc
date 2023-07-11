@@ -12,19 +12,19 @@ impl rpc::response::GetTimings {
         }
 
         let acceptable_time = (nekoton::utils::now_sec_u64()
-            - everscale_jrpc_models::ACCEPTABLE_NODE_BLOCK_INSERT_TIME)
+            - everscale_rpc_models::ACCEPTABLE_NODE_BLOCK_INSERT_TIME)
             as u32;
 
-        self.mc_time_diff.unsigned_abs() < everscale_jrpc_models::MC_ACCEPTABLE_TIME_DIFF
+        self.mc_time_diff.unsigned_abs() < everscale_rpc_models::MC_ACCEPTABLE_TIME_DIFF
             && self.shard_client_time_diff.unsigned_abs()
-                < everscale_jrpc_models::SC_ACCEPTABLE_TIME_DIFF
+                < everscale_rpc_models::SC_ACCEPTABLE_TIME_DIFF
             && self.last_mc_block_seqno - self.last_shard_client_mc_block_seqno
-                < everscale_jrpc_models::ACCEPTABLE_BLOCKS_DIFF
+                < everscale_rpc_models::ACCEPTABLE_BLOCKS_DIFF
             && self.last_mc_utime > acceptable_time
     }
 
     pub fn has_state_for(&self, time: u32) -> bool {
-        let now = everscale_jrpc_models::now();
+        let now = everscale_rpc_models::now();
 
         self.last_mc_utime > time && (now - self.shard_client_time_diff as u64) > time as u64
     }

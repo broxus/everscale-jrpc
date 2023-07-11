@@ -1,5 +1,5 @@
 [package]
-name = "everscale-jrpc-server"
+name = "everscale-rpc-server"
 version = "0.2.2"
 edition = "2021"
 
@@ -32,7 +32,7 @@ ton-indexer = { git = "https://github.com/broxus/ton-indexer.git" }
 ton_block = { git = "https://github.com/broxus/ton-labs-block.git" }
 ton_types = { git = "https://github.com/broxus/ton-labs-types.git" }
 
-everscale-jrpc-models = { path = "../models" }
+everscale-rpc-models = { path = "../models" }
 everscale-proto = { path = "../proto" }
 
 [dev-dependencies]
