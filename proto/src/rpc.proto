@@ -116,7 +116,7 @@ message Response {
       }
     }
 
-    optional ContractState contract_state = 1;
+    ContractState contract_state = 1;
   }
 
   oneof Result {
@@ -131,4 +131,9 @@ message Response {
     GetContractState        get_contract_state      = 9;
     google.protobuf.Empty   send_message            = 10;
   }
+}
+
+message Error {
+  int32 code = 1;
+  string message = 2;
 }

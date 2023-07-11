@@ -60,7 +60,7 @@ impl Server {
                         axum::http::Method::PUT,
                     ])),
             )
-            .layer(TimeoutLayer::new(Duration::from_secs(10)));
+            .layer(TimeoutLayer::new(Duration::from_secs(25)));
 
         #[cfg(feature = "compression")]
         let service = service.layer(tower_http::compression::CompressionLayer::new().gzip(true));

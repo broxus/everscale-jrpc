@@ -662,7 +662,11 @@ impl<'a> ProtoError<'a> {
 
 impl IntoResponse for ProtoError<'_> {
     fn into_response(self) -> axum::response::Response {
-        axum::Json(self).into_response()
+        Protobuf(rpc::Error {
+            code: self.code,
+            message: self.message.to_string(),
+        })
+        .into_response()
     }
 }
 

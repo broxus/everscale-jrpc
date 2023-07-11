@@ -1054,6 +1054,7 @@ dependencies = [
  "base64 0.13.1",
  "ed25519-dalek 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "everscale-jrpc-models",
+ "everscale-proto",
  "futures",
  "hex",
  "itertools",

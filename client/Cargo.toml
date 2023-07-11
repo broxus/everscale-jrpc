@@ -27,6 +27,8 @@ nekoton-utils = { git = "https://github.com/broxus/nekoton.git", default-feature
 itertools = "0.10.5"
 
 everscale-jrpc-models = { path = "../models" }
+everscale-proto = { path = "../proto" }
+
 base64 = "0.13.1"
 hex = "0.4.3"
 

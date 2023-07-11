@@ -3,11 +3,11 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 
-const MC_ACCEPTABLE_TIME_DIFF: u64 = 120;
-const SC_ACCEPTABLE_TIME_DIFF: u64 = 120;
-const ACCEPTABLE_BLOCKS_DIFF: u32 = 10;
+pub const MC_ACCEPTABLE_TIME_DIFF: u64 = 120;
+pub const SC_ACCEPTABLE_TIME_DIFF: u64 = 120;
+pub const ACCEPTABLE_BLOCKS_DIFF: u32 = 10;
 
-const ACCEPTABLE_NODE_BLOCK_INSERT_TIME: u64 = 240;
+pub const ACCEPTABLE_NODE_BLOCK_INSERT_TIME: u64 = 240;
 
 pub trait Request: Serialize {
     type ResponseContainer: DeserializeOwned;
@@ -420,7 +420,7 @@ impl GetTimingsResponse {
     }
 }
 
-fn now() -> u64 {
+pub fn now() -> u64 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
