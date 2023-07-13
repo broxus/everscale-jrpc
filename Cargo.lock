@@ -1170,6 +1170,7 @@ dependencies = [
 name = "everscale-rpc-models"
 version = "0.1.0"
 dependencies = [
+ "everscale-proto",
  "nekoton-abi",
  "nekoton-utils",
  "serde",

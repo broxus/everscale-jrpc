@@ -1,40 +1,34 @@
 #![warn(clippy::dbg_macro)]
 #![allow(clippy::large_enum_variant)]
 
-use std::cmp;
-use std::collections::HashSet;
-use std::fmt::Formatter;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use futures::StreamExt;
 use nekoton::transport::models::ExistingContract;
 use nekoton::utils::SimpleClock;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use reqwest::{StatusCode, Url};
-use serde::{Deserialize, Serialize};
 use ton_block::{
     Account, CommonMsgInfo, Deserializable, GetRepresentationHash, MaybeDeserialize, MsgAddressInt,
     Serializable, Transaction,
 };
-
-use everscale_proto::rpc;
-
-use itertools::Itertools;
 use ton_types::UInt256;
 
+use everscale_rpc_models::Timings;
+
 use everscale_proto::prost::{bytes, Message};
-use everscale_proto::rpc::response::get_contract_state::contract_state::{
-    GenTimings, LastTransactionId,
+use everscale_proto::{
+    rpc,
+    rpc::response::get_contract_state::contract_state::{GenTimings, LastTransactionId},
 };
 
-static ROUND_ROBIN_COUNTER: AtomicUsize = AtomicUsize::new(0);
+use crate::*;
 
 #[derive(Clone)]
 pub struct ProtoClient {
-    state: Arc<RpcState>,
+    state: Arc<State>,
     is_capable_of_message_tracking: bool,
 }
 
@@ -42,7 +36,7 @@ impl ProtoClient {
     /// `endpoints` - full URLs of the RPC endpoints.
     pub async fn new<I: IntoIterator<Item = Url>>(
         endpoints: I,
-        options: ProtoClientOptions,
+        options: ClientOptions,
     ) -> Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(options.request_timeout)
@@ -63,13 +57,13 @@ impl ProtoClient {
     pub async fn with_client<I: IntoIterator<Item = Url>>(
         client: reqwest::Client,
         endpoints: I,
-        options: ProtoClientOptions,
+        options: ClientOptions,
     ) -> Result<Self> {
         let mut client = Self {
-            state: Arc::new(RpcState {
+            state: Arc::new(State {
                 endpoints: endpoints
                     .into_iter()
-                    .map(|e| ProtoConnection::new(e.to_string(), client.clone()))
+                    .map(|e| Arc::new(ProtoConnection::new(e.to_string(), client.clone())) as _)
                     .collect(),
                 live_endpoints: Default::default(),
                 options: options.clone(),
@@ -99,9 +93,7 @@ impl ProtoClient {
 
         for endpoint in &client.state.endpoints {
             if !endpoint
-                .method_is_supported(rpc::request::Call::GetDstTransaction(
-                    rpc::request::GetDstTransaction::default(),
-                ))
+                .method_is_supported("getDstTransaction")
                 .await
                 .unwrap_or_default()
             {
@@ -130,7 +122,7 @@ impl ProtoClient {
             .await?
             .into_inner()
             .result
-            .ok_or::<RunError>(ProtoClientError::InvalidResponse.into())?;
+            .ok_or::<RunError>(ClientError::InvalidResponse.into())?;
 
         match result {
             rpc::response::Result::GetContractState(state) => match state.contract_state {
@@ -139,7 +131,7 @@ impl ProtoClient {
 
                     let timings = match state
                         .gen_timings
-                        .ok_or::<RunError>(ProtoClientError::InvalidResponse.into())?
+                        .ok_or::<RunError>(ClientError::InvalidResponse.into())?
                     {
                         GenTimings::Known(t) => nekoton_abi::GenTimings::Known {
                             gen_lt: t.gen_lt,
@@ -150,7 +142,7 @@ impl ProtoClient {
 
                     let last_transaction_id = match state
                         .last_transaction_id
-                        .ok_or::<RunError>(ProtoClientError::InvalidResponse.into())?
+                        .ok_or::<RunError>(ClientError::InvalidResponse.into())?
                     {
                         LastTransactionId::Exact(lt) => {
                             nekoton_abi::LastTransactionId::Exact(nekoton_abi::TransactionId {
@@ -171,7 +163,7 @@ impl ProtoClient {
                 }
                 None => Ok(None),
             },
-            _ => Err(ProtoClientError::InvalidResponse.into()),
+            _ => Err(ClientError::InvalidResponse.into()),
         }
     }
 
@@ -220,7 +212,7 @@ impl ProtoClient {
 
                     let timings = match state
                         .gen_timings
-                        .ok_or::<RunError>(ProtoClientError::InvalidResponse.into())?
+                        .ok_or::<RunError>(ClientError::InvalidResponse.into())?
                     {
                         GenTimings::Known(t) => nekoton_abi::GenTimings::Known {
                             gen_lt: t.gen_lt,
@@ -231,7 +223,7 @@ impl ProtoClient {
 
                     let last_transaction_id = match state
                         .last_transaction_id
-                        .ok_or::<RunError>(ProtoClientError::InvalidResponse.into())?
+                        .ok_or::<RunError>(ClientError::InvalidResponse.into())?
                     {
                         LastTransactionId::Exact(lt) => {
                             nekoton_abi::LastTransactionId::Exact(nekoton_abi::TransactionId {
@@ -255,7 +247,7 @@ impl ProtoClient {
                     Ok(None)
                 }
             },
-            _ => Err(ProtoClientError::InvalidResponse.into()),
+            _ => Err(ClientError::InvalidResponse.into()),
         }
     }
 
@@ -305,15 +297,15 @@ impl ProtoClient {
             .request(request)
             .await
             .map(|x| x.result.result)?
-            .ok_or::<RunError>(ProtoClientError::InvalidResponse.into())?;
+            .ok_or::<RunError>(ClientError::InvalidResponse.into())?;
 
         match result {
             rpc::response::Result::SendMessage(()) => Ok(()),
-            _ => Err(ProtoClientError::InvalidResponse.into()),
+            _ => Err(ClientError::InvalidResponse.into()),
         }
     }
 
-    /// Works with any jrpc node, but not as reliable as `send_message`.
+    /// Works with any rpc node, but not as reliable as `send_message`.
     /// You should use `send_message` if possible.
     pub async fn send_message_unrelaible(
         &self,
@@ -443,7 +435,7 @@ impl ProtoClient {
             Some(rpc::response::Result::GetLatestKeyBlock(key_block)) => Ok(
                 ton_block::Block::construct_from_bytes(key_block.block.as_ref())?,
             ),
-            _ => Err(ProtoClientError::InvalidResponse.into()),
+            _ => Err(ClientError::InvalidResponse.into()),
         }
     }
 
@@ -476,7 +468,7 @@ impl ProtoClient {
                 Some(bytes) => Ok(Some(Transaction::construct_from_bytes(bytes.as_ref())?)),
                 None => Ok(None),
             },
-            _ => Err(ProtoClientError::InvalidResponse.into()),
+            _ => Err(ClientError::InvalidResponse.into()),
         }
     }
 
@@ -505,7 +497,7 @@ impl ProtoClient {
                 .into_iter()
                 .map(|x| decode_raw_transaction(&x))
                 .collect::<Result<_>>(),
-            _ => Err(ProtoClientError::InvalidResponse.into()),
+            _ => Err(ClientError::InvalidResponse.into()),
         }
     }
 
@@ -528,11 +520,12 @@ impl ProtoClient {
                 Some(bytes) => Ok(Some(Transaction::construct_from_bytes(bytes.as_ref())?)),
                 None => Ok(None),
             },
-            _ => Err(ProtoClientError::InvalidResponse.into()),
+            _ => Err(ClientError::InvalidResponse.into()),
         }
     }
 
-    pub async fn request(&self, request: rpc::Request) -> Result<Answer, RunError> {
+    pub async fn request(&self, request: rpc::Request) -> Result<Answer<rpc::Response>, RunError> {
+        let request = request.encode_to_vec();
         const NUM_RETRIES: usize = 10;
 
         for tries in 0..=NUM_RETRIES {
@@ -540,13 +533,18 @@ impl ProtoClient {
                 .state
                 .get_client()
                 .await
-                .ok_or::<RunError>(ProtoClientError::NoEndpointsAvailable.into())?;
+                .ok_or::<RunError>(ClientError::NoEndpointsAvailable.into())?;
 
             let response = match client.request(request.clone()).await {
+                Ok(res) => decode_answer(res).await,
+                Err(e) => Err(e.into()),
+            };
+
+            let response = match response {
                 Ok(a) => a,
                 Err(e) => {
                     // TODO: tracing::error!(request, "Error while sending request to endpoint: {e:?}");
-                    self.state.remove_endpoint(&client.endpoint);
+                    self.state.remove_endpoint(&client.endpoint());
 
                     if tries == NUM_RETRIES {
                         return Err(e.into());
@@ -562,11 +560,11 @@ impl ProtoClient {
                     return Ok(Answer {
                         result,
                         node_stats: client.get_stats(),
-                    })
+                    });
                 }
                 ProtoAnswer::Error(e) => {
                     if tries == NUM_RETRIES {
-                        return Err(ProtoClientError::ErrorResponse(e.code, e.message).into());
+                        return Err(ClientError::ErrorResponse(e.code, e.message).into());
                     }
 
                     tokio::time::sleep(self.state.options.aggressive_poll_interval).await;
@@ -575,29 +573,6 @@ impl ProtoClient {
         }
 
         unreachable!()
-    }
-}
-
-pub struct Answer {
-    result: rpc::Response,
-    node_stats: Option<rpc::response::GetTimings>,
-}
-
-impl Answer {
-    pub fn into_inner(self) -> rpc::Response {
-        self.result
-    }
-
-    pub fn has_state_for(&self, time: u32) -> Result<(), RunError> {
-        if let Some(stats) = &self.node_stats {
-            return if stats.has_state_for(time) {
-                Ok(())
-            } else {
-                Err(RunError::NoStateForTimeStamp(time))
-            };
-        }
-        // If we don't have stats, we assume that the node is healthy
-        Ok(())
     }
 }
 
@@ -634,209 +609,12 @@ fn deserialize_account_stuff(bytes: &bytes::Bytes) -> Result<ton_block::AccountS
     })
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProtoClientOptions {
-    /// How often the probe should update health statuses.
-    ///
-    /// Default: `1 sec`
-    pub probe_interval: Duration,
-
-    /// How long to wait for a response from a node.
-    ///
-    /// Default: `1 sec`
-    pub request_timeout: Duration,
-    /// How long to wait between health checks in case if all nodes are down.
-    ///
-    /// Default: `1 sec`
-    pub aggressive_poll_interval: Duration,
-
-    pub choose_strategy: ChooseStrategy,
-}
-
-impl Default for ProtoClientOptions {
-    fn default() -> Self {
-        Self {
-            probe_interval: Duration::from_secs(1),
-            request_timeout: Duration::from_secs(3),
-            aggressive_poll_interval: Duration::from_secs(1),
-            choose_strategy: ChooseStrategy::Random,
-        }
-    }
-}
-
-#[derive(Debug, Copy, Clone)]
-pub struct SendOptions {
-    /// action to perform if an error occurs during waiting for message delivery.
-    ///
-    /// Default: [`TransportErrorAction::Return`]
-    pub error_action: TransportErrorAction,
-
-    /// time after which the message is considered as expired.
-    ///
-    /// Default: `60 sec`
-    pub ttl: Duration,
-
-    /// how often the message is checked for delivery.
-    ///
-    /// Default: `10 sec`
-    pub poll_interval: Duration,
-}
-
-impl Default for SendOptions {
-    fn default() -> Self {
-        Self {
-            error_action: TransportErrorAction::Return,
-            ttl: Duration::from_secs(60),
-            poll_interval: Duration::from_secs(10),
-        }
-    }
-}
-
-#[derive(Debug, Copy, Clone)]
-pub enum TransportErrorAction {
-    /// Poll endlessly until message is delivered or expired
-    Poll,
-    /// Fail immediately
-    Return,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SendStatus {
-    LikelyConfirmed,
-    Confirmed(Transaction),
-    Expired,
-}
-
-struct RpcState {
-    endpoints: Vec<ProtoConnection>,
-    live_endpoints: RwLock<Vec<ProtoConnection>>,
-    options: ProtoClientOptions,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Copy)]
-pub enum ChooseStrategy {
-    Random,
-    RoundRobin,
-    /// Choose the endpoint with the lowest latency
-    TimeBased,
-}
-
-impl ChooseStrategy {
-    fn choose(&self, endpoints: &[ProtoConnection]) -> Option<ProtoConnection> {
-        use rand::prelude::SliceRandom;
-
-        match self {
-            ChooseStrategy::Random => endpoints.choose(&mut rand::thread_rng()).cloned(),
-            ChooseStrategy::RoundRobin => {
-                let index = ROUND_ROBIN_COUNTER.fetch_add(1, Ordering::Release);
-
-                endpoints.get(index % endpoints.len()).cloned()
-            }
-            ChooseStrategy::TimeBased => endpoints
-                .iter()
-                .min_by(|left, right| left.cmp(right))
-                .cloned(),
-        }
-    }
-}
-
-impl RpcState {
-    async fn get_client(&self) -> Option<ProtoConnection> {
-        for _ in 0..10 {
-            let client = {
-                let live_endpoints = self.live_endpoints.read();
-                self.options.choose_strategy.choose(&live_endpoints)
-            };
-
-            if client.is_some() {
-                return client;
-            } else {
-                tokio::time::sleep(self.options.aggressive_poll_interval).await;
-            }
-        }
-
-        None
-    }
-
-    async fn update_endpoints(&self) -> usize {
-        let mut futures = futures::stream::FuturesUnordered::new();
-        for endpoint in &self.endpoints {
-            futures.push(async move { endpoint.is_alive().await.then(|| endpoint.clone()) });
-        }
-
-        let mut new_endpoints = Vec::with_capacity(self.endpoints.len());
-        while let Some(endpoint) = futures.next().await {
-            new_endpoints.extend(endpoint);
-        }
-
-        let new_endpoints_ids: HashSet<&str> =
-            HashSet::from_iter(new_endpoints.iter().map(|e| e.endpoint.as_str()));
-        let mut old_endpoints = self.live_endpoints.write();
-        let old_endpoints_ids =
-            HashSet::from_iter(old_endpoints.iter().map(|e| e.endpoint.as_str()));
-
-        if old_endpoints_ids != new_endpoints_ids {
-            let sorted_endpoints: Vec<_> = new_endpoints_ids.iter().sorted().collect();
-            tracing::warn!(endpoints = ?sorted_endpoints, "Endpoints updated");
-        }
-
-        *old_endpoints = new_endpoints;
-        old_endpoints.len()
-    }
-
-    fn remove_endpoint(&self, endpoint: &str) {
-        self.live_endpoints
-            .write()
-            .retain(|c| c.endpoint.as_ref() != endpoint);
-
-        tracing::warn!(endpoint, "Removed endpoint");
-    }
-}
-
 #[derive(Clone, Debug)]
 struct ProtoConnection {
     endpoint: Arc<String>,
     client: reqwest::Client,
     was_dead: Arc<AtomicBool>,
-    stats: Arc<Mutex<Option<rpc::response::GetTimings>>>,
-}
-
-impl PartialEq<Self> for ProtoConnection {
-    fn eq(&self, other: &Self) -> bool {
-        self.endpoint == other.endpoint
-    }
-}
-
-impl Eq for ProtoConnection {}
-
-impl PartialOrd<Self> for ProtoConnection {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl cmp::Ord for ProtoConnection {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        if self.eq(other) {
-            cmp::Ordering::Equal
-        } else {
-            let left_stats = self.get_stats();
-            let right_stats = other.get_stats();
-
-            match (left_stats, right_stats) {
-                (Some(left_stats), Some(right_stats)) => left_stats.cmp(&right_stats),
-                (None, Some(_)) => cmp::Ordering::Less,
-                (Some(_), None) => cmp::Ordering::Greater,
-                (None, None) => cmp::Ordering::Equal,
-            }
-        }
-    }
-}
-
-impl std::fmt::Display for ProtoConnection {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.endpoint)
-    }
+    stats: Arc<Mutex<Option<Timings>>>,
 }
 
 impl ProtoConnection {
@@ -848,45 +626,38 @@ impl ProtoConnection {
             stats: Arc::new(Default::default()),
         }
     }
+}
 
-    async fn request(&self, request: rpc::Request) -> Result<ProtoAnswer> {
-        let body = request.encode_to_vec();
-        let req = self.client.post(self.endpoint.as_str()).body(body);
-
-        let response = req.send().await?;
-
-        let result = match response.status() {
-            StatusCode::OK => ProtoAnswer::Result(rpc::Response::decode(response.bytes().await?)?),
-            _ => ProtoAnswer::Error(rpc::Error::decode(response.bytes().await?)?),
-        };
-
-        Ok(result)
-    }
-
+#[async_trait::async_trait]
+impl Connection for ProtoConnection {
     fn update_was_dead(&self, is_dead: bool) {
         self.was_dead.store(is_dead, Ordering::Release);
     }
 
-    async fn is_alive(&self) -> bool {
-        let check_result = self.is_alive_inner().await;
-        let is_alive = check_result.as_bool();
-        self.update_was_dead(!is_alive);
+    fn endpoint(&self) -> &str {
+        self.endpoint.as_str()
+    }
 
-        match check_result {
-            LiveCheckResult::Live(stats) => self.set_stats(Some(stats)),
-            LiveCheckResult::Dummy => {}
-            LiveCheckResult::Dead => {}
-        }
+    fn get_stats(&self) -> Option<Timings> {
+        self.stats.lock().clone()
+    }
 
-        is_alive
+    fn set_stats(&self, stats: Option<Timings>) {
+        *self.stats.lock() = stats;
     }
 
     async fn is_alive_inner(&self) -> LiveCheckResult {
         let request = rpc::Request {
             call: Some(rpc::request::Call::GetTimings(())),
-        };
+        }
+        .encode_to_vec();
 
         let response = match self.request(request).await {
+            Ok(res) => decode_answer(res).await,
+            Err(e) => Err(e.into()),
+        };
+
+        let response = match response {
             Ok(a) => a,
             Err(e) => {
                 // general error, link is dead, so no need to check other branch
@@ -900,20 +671,21 @@ impl ProtoConnection {
 
         match response {
             ProtoAnswer::Result(result) => {
-                if let Some(rpc::response::Result::GetTimings(timings)) = result.result {
-                    let is_reliable = timings.is_reliable();
+                if let Some(rpc::response::Result::GetTimings(t)) = result.result {
+                    let t = Timings::from(t);
+                    let is_reliable = t.is_reliable();
                     if !is_reliable {
-                        let rpc::response::GetTimings {
+                        let Timings {
                             last_mc_block_seqno,
                             last_shard_client_mc_block_seqno,
                             mc_time_diff,
                             shard_client_time_diff,
                             ..
-                        } = timings;
+                        } = t;
                         tracing::warn!(last_mc_block_seqno,last_shard_client_mc_block_seqno,mc_time_diff,shard_client_time_diff, endpoint = ?self.endpoint, "Endpoint is not reliable" );
                     }
 
-                    return LiveCheckResult::Live(timings);
+                    return LiveCheckResult::Live(t);
                 }
             }
             ProtoAnswer::Error(e) => {
@@ -927,9 +699,15 @@ impl ProtoConnection {
         // falback to keyblock request
         let request = rpc::Request {
             call: Some(rpc::request::Call::GetLatestKeyBlock(())),
+        }
+        .encode_to_vec();
+
+        let response = match self.request(request).await {
+            Ok(res) => decode_answer(res).await,
+            Err(e) => Err(e.into()),
         };
 
-        match self.request(request).await {
+        match response {
             Ok(res) => {
                 if let ProtoAnswer::Result(_) = res {
                     LiveCheckResult::Dummy
@@ -944,9 +722,20 @@ impl ProtoConnection {
         }
     }
 
-    async fn method_is_supported(&self, method: rpc::request::Call) -> Result<bool> {
-        let body = rpc::Request { call: Some(method) }.encode_to_vec();
-        let req = self.client.post(self.endpoint.as_str()).body(body);
+    async fn method_is_supported(&self, method: &str) -> Result<bool> {
+        let body = match method {
+            "getDstTransaction" => rpc::Request {
+                call: Some(rpc::request::Call::GetDstTransaction(
+                    rpc::request::GetDstTransaction::default(),
+                )),
+            },
+            _ => return Ok(false),
+        };
+
+        let req = self
+            .client
+            .post(self.endpoint.as_str())
+            .body(body.encode_to_vec());
 
         let response = req.send().await?;
         let result = match response.status() {
@@ -970,234 +759,23 @@ impl ProtoConnection {
         Ok(res)
     }
 
-    fn get_stats(&self) -> Option<rpc::response::GetTimings> {
-        self.stats.lock().clone()
-    }
-
-    fn set_stats(&self, stats: Option<rpc::response::GetTimings>) {
-        *self.stats.lock() = stats;
+    async fn request(&self, request: Vec<u8>) -> Result<reqwest::Response, reqwest::Error> {
+        let req = self.client.post(self.endpoint.as_str()).body(request);
+        let res = req.send().await?;
+        Ok(res)
     }
 }
 
-enum LiveCheckResult {
-    /// GetTimings request was successful
-    Live(rpc::response::GetTimings),
-    /// Keyblock request was successful, but getTimings failed
-    Dummy,
-    Dead,
-}
+async fn decode_answer(response: reqwest::Response) -> Result<ProtoAnswer> {
+    let res = match response.status() {
+        StatusCode::OK => ProtoAnswer::Result(rpc::Response::decode(response.bytes().await?)?),
+        _ => ProtoAnswer::Error(rpc::Error::decode(response.bytes().await?)?),
+    };
 
-impl LiveCheckResult {
-    fn as_bool(&self) -> bool {
-        match self {
-            LiveCheckResult::Live(metrics) => metrics.is_reliable(),
-            LiveCheckResult::Dummy => true,
-            LiveCheckResult::Dead => false,
-        }
-    }
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum ProtoClientError {
-    #[error("No endpoints available")]
-    NoEndpointsAvailable,
-    #[error("Error response ({0}): {1}")]
-    ErrorResponse(i32, String),
-    #[error("Failed to parse response")]
-    InvalidResponse,
-}
-
-#[derive(Debug, Clone)]
-struct JrpcRequest<'a, T> {
-    method: &'a str,
-    params: T,
-}
-
-impl<T: Serialize> Serialize for JrpcRequest<'_, T> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::ser::Serializer,
-    {
-        use serde::ser::SerializeStruct;
-
-        let mut s = serializer.serialize_struct("JrpcRequest", 4)?;
-        s.serialize_field("jsonrpc", "2.0")?;
-        s.serialize_field("id", &0)?;
-        s.serialize_field("method", self.method)?;
-        s.serialize_field("params", &self.params)?;
-        s.end()
-    }
+    Ok(res)
 }
 
 pub enum ProtoAnswer {
     Result(rpc::Response),
     Error(rpc::Error),
-}
-
-#[derive(Serialize, Debug, Deserialize, PartialEq, Eq)]
-pub struct ProtoRpcError {
-    pub code: i32,
-    pub message: String,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum RunError {
-    #[error(transparent)]
-    Generic(#[from] anyhow::Error),
-    #[error("No state for timestamp {0}")]
-    NoStateForTimeStamp(u32),
-    #[error("Network error: {0}")]
-    NetworkError(#[from] reqwest::Error),
-    #[error("Proto error: {0}")]
-    ProtoClientError(#[from] ProtoClientError),
-    #[error("JSON error: {0}")]
-    ParseError(#[from] serde_json::Error),
-    #[error("Invalid message type: {0}")]
-    NotInboundMessage(String),
-}
-
-#[cfg(test)]
-mod test {
-    use std::str::FromStr;
-    use std::time::Duration;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn test() {
-        tracing_subscriber::fmt::init();
-
-        let rpc = [
-            "http://127.0.0.1:8081",
-            "http://34.78.198.249:8081/rpc",
-            "https://jrpc.everwallet.net/rpc",
-        ]
-        .iter()
-        .map(|x| x.parse().unwrap())
-        .collect::<Vec<_>>();
-
-        let balanced_client = ProtoClient::new(
-            rpc,
-            ProtoClientOptions {
-                probe_interval: Duration::from_secs(10),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-
-        for _ in 0..10 {
-            let response = balanced_client.get_latest_key_block().await.unwrap();
-            tracing::info!("response is ok: {response:?}");
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
-    }
-
-    #[tokio::test]
-    async fn test_get() {
-        let pr = get_client().await;
-
-        pr.get_contract_state(
-            &MsgAddressInt::from_str(
-                "0:8e2586602513e99a55fa2be08561469c7ce51a7d5a25977558e77ef2bc9387b4",
-            )
-            .unwrap(),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-
-        pr.get_contract_state(
-            &MsgAddressInt::from_str(
-                "-1:efd5a14409a8a129686114fc092525fddd508f1ea56d1b649a3a695d3a5b188c",
-            )
-            .unwrap(),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-
-        assert!(pr
-            .get_contract_state(
-                &MsgAddressInt::from_str(
-                    "-1:aaa5a14409a8a129686114fc092525fddd508f1ea56d1b649a3a695d3a5b188c",
-                )
-                .unwrap(),
-            )
-            .await
-            .unwrap()
-            .is_none());
-    }
-
-    #[tokio::test]
-    async fn test_key_block() {
-        let pr = get_client().await;
-
-        pr.get_latest_key_block().await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_all_dead() {
-        let pr = ProtoClient::new(
-            [
-                "https://lolkek228.dead/rpc".parse().unwrap(),
-                "http://127.0.0.1:8081".parse().unwrap(),
-                "http://127.0.0.1:12333".parse().unwrap(),
-            ],
-            ProtoClientOptions {
-                probe_interval: Duration::from_secs(10),
-                ..Default::default()
-            },
-        )
-        .await
-        .is_err();
-
-        assert!(pr);
-    }
-
-    #[tokio::test]
-    async fn test_transations() {
-        let pr = get_client().await;
-
-        pr.get_transactions(
-            100,
-            &MsgAddressInt::from_str(
-                "-1:3333333333333333333333333333333333333333333333333333333333333333",
-            )
-            .unwrap(),
-            None,
-        )
-        .await
-        .unwrap();
-    }
-
-    #[tokio::test]
-    async fn get_dst_transaction() {
-        let pr = get_client().await;
-        let tx = pr
-            .get_dst_transaction(
-                &hex::decode("40172727c17aa9ad0dd11c10e822226a7d22cc1e41f8c5d35b7f5614d8a12533")
-                    .unwrap(),
-            )
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(tx.lt, 33247841000007);
-    }
-
-    async fn get_client() -> ProtoClient {
-        let pr = ProtoClient::new(
-            [
-                "https://jrpc.everwallet.net/rpc".parse().unwrap(),
-                "http://127.0.0.1:8081".parse().unwrap(),
-            ],
-            ProtoClientOptions {
-                probe_interval: Duration::from_secs(10),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-        pr
-    }
 }

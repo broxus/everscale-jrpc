@@ -2,8 +2,6 @@ use nekoton_utils::*;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::*;
-
 pub trait Request: Serialize {
     type ResponseContainer: DeserializeOwned;
     type Response: From<Self::ResponseContainer>;
@@ -390,42 +388,6 @@ pub struct GetTimingsResponse {
     pub last_mc_utime: u32,
     pub mc_time_diff: i64,
     pub shard_client_time_diff: i64,
-}
-
-impl GetTimingsResponse {
-    pub fn is_reliable(&self) -> bool {
-        // just booted up
-        if self == &Self::default() {
-            return false;
-        }
-
-        let acceptable_time = (now_sec_u64() - ACCEPTABLE_NODE_BLOCK_INSERT_TIME) as u32;
-
-        self.mc_time_diff.unsigned_abs() < MC_ACCEPTABLE_TIME_DIFF
-            && self.shard_client_time_diff.unsigned_abs() < SC_ACCEPTABLE_TIME_DIFF
-            && self.last_mc_block_seqno - self.last_shard_client_mc_block_seqno
-                < ACCEPTABLE_BLOCKS_DIFF
-            && self.last_mc_utime > acceptable_time
-    }
-
-    pub fn has_state_for(&self, time: u32) -> bool {
-        let now = now();
-
-        self.last_mc_utime > time && (now - self.shard_client_time_diff as u64) > time as u64
-    }
-}
-
-impl PartialOrd for GetTimingsResponse {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for GetTimingsResponse {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        (self.shard_client_time_diff, self.mc_time_diff)
-            .cmp(&(other.shard_client_time_diff, other.mc_time_diff))
-    }
 }
 
 #[cfg(test)]

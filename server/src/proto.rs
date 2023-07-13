@@ -314,7 +314,7 @@ impl ProtoServer {
                 rpc::response::get_contract_state::contract_state::LastTransactionId::Exact(
                     rpc::response::get_contract_state::contract_state::Exact {
                         lt: transaction_id.lt,
-                        hash: bytes::Bytes::copy_from_slice(transaction_id.hash.as_slice()),
+                        hash: Bytes::copy_from_slice(transaction_id.hash.as_slice()),
                     },
                 )
             }

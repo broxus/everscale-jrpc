@@ -8,8 +8,6 @@ prost = "0.11"
 
 nekoton = { git = "https://github.com/broxus/nekoton.git", default-features = false }
 
-everscale-rpc-models = { path = "../models" }
-
 [build-dependencies]
 prost-build = "0.11"
 
