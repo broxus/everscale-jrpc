@@ -1,5 +1,5 @@
 use anyhow::Result;
-use everscale_jrpc_client::JrpcClientOptions;
+use everscale_rpc_client::ClientOptions;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -7,9 +7,10 @@ async fn main() -> Result<()> {
         .with_max_level(tracing::Level::DEBUG)
         .init();
 
-    let client = everscale_jrpc_client::JrpcClient::new(
-        ["https://jrpc.everwallet.net/rpc".parse().unwrap()],
-        JrpcClientOptions::default(),
+    let client = everscale_rpc_client::jrpc::JrpcClient::new(
+        //["https://jrpc.everwallet.net/rpc".parse().unwrap()],
+        ["http://localhost:8081/rpc".parse().unwrap()],
+        ClientOptions::default(),
     )
     .await?;
 

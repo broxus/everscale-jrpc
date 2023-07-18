@@ -28,7 +28,7 @@ use crate::*;
 
 #[derive(Clone)]
 pub struct ProtoClient {
-    state: Arc<State>,
+    state: Arc<State<ProtoConnection>>,
     is_capable_of_message_tracking: bool,
 }
 
@@ -63,7 +63,7 @@ impl ProtoClient {
             state: Arc::new(State {
                 endpoints: endpoints
                     .into_iter()
-                    .map(|e| Arc::new(ProtoConnection::new(e.to_string(), client.clone())) as _)
+                    .map(|e| ProtoConnection::new(e.to_string(), client.clone()))
                     .collect(),
                 live_endpoints: Default::default(),
                 options: options.clone(),
@@ -525,7 +525,8 @@ impl ProtoClient {
     }
 
     pub async fn request(&self, request: rpc::Request) -> Result<Answer<rpc::Response>, RunError> {
-        let request = request.encode_to_vec();
+        let request: ConnectionRequest<String, _> = ConnectionRequest::PROTO(request);
+
         const NUM_RETRIES: usize = 10;
 
         for tries in 0..=NUM_RETRIES {
@@ -535,7 +536,7 @@ impl ProtoClient {
                 .await
                 .ok_or::<RunError>(ClientError::NoEndpointsAvailable.into())?;
 
-            let response = match client.request(request.clone()).await {
+            let response = match client.request(&request).await {
                 Ok(res) => decode_answer(res).await,
                 Err(e) => Err(e.into()),
             };
@@ -628,6 +629,44 @@ impl ProtoConnection {
     }
 }
 
+impl PartialEq<Self> for ProtoConnection {
+    fn eq(&self, other: &Self) -> bool {
+        self.endpoint() == other.endpoint()
+    }
+}
+
+impl Eq for ProtoConnection {}
+
+impl PartialOrd<Self> for ProtoConnection {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ProtoConnection {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        if self.eq(other) {
+            cmp::Ordering::Equal
+        } else {
+            let left_stats = self.get_stats();
+            let right_stats = other.get_stats();
+
+            match (left_stats, right_stats) {
+                (Some(left_stats), Some(right_stats)) => left_stats.cmp(&right_stats),
+                (None, Some(_)) => cmp::Ordering::Less,
+                (Some(_), None) => cmp::Ordering::Greater,
+                (None, None) => cmp::Ordering::Equal,
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for ProtoConnection {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.endpoint())
+    }
+}
+
 #[async_trait::async_trait]
 impl Connection for ProtoConnection {
     fn update_was_dead(&self, is_dead: bool) {
@@ -646,13 +685,16 @@ impl Connection for ProtoConnection {
         *self.stats.lock() = stats;
     }
 
-    async fn is_alive_inner(&self) -> LiveCheckResult {
-        let request = rpc::Request {
-            call: Some(rpc::request::Call::GetTimings(())),
-        }
-        .encode_to_vec();
+    fn get_client(&self) -> &reqwest::Client {
+        &self.client
+    }
 
-        let response = match self.request(request).await {
+    async fn is_alive_inner(&self) -> LiveCheckResult {
+        let request: ConnectionRequest<String, _> = ConnectionRequest::PROTO(rpc::Request {
+            call: Some(rpc::request::Call::GetTimings(())),
+        });
+
+        let response = match self.request(&request).await {
             Ok(res) => decode_answer(res).await,
             Err(e) => Err(e.into()),
         };
@@ -697,12 +739,11 @@ impl Connection for ProtoConnection {
         }
 
         // falback to keyblock request
-        let request = rpc::Request {
+        let request: ConnectionRequest<String, _> = ConnectionRequest::PROTO(rpc::Request {
             call: Some(rpc::request::Call::GetLatestKeyBlock(())),
-        }
-        .encode_to_vec();
+        });
 
-        let response = match self.request(request).await {
+        let response = match self.request(&request).await {
             Ok(res) => decode_answer(res).await,
             Err(e) => Err(e.into()),
         };
@@ -756,12 +797,6 @@ impl Connection for ProtoConnection {
             }
         };
 
-        Ok(res)
-    }
-
-    async fn request(&self, request: Vec<u8>) -> Result<reqwest::Response, reqwest::Error> {
-        let req = self.client.post(self.endpoint.as_str()).body(request);
-        let res = req.send().await?;
         Ok(res)
     }
 }

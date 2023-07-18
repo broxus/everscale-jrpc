@@ -5,10 +5,10 @@ use std::cmp;
 use std::collections::HashSet;
 use std::fmt::Formatter;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
+use everscale_proto::prost::Message;
 use futures::StreamExt;
 use itertools::Itertools;
 use parking_lot::RwLock;
@@ -46,63 +46,48 @@ pub trait Connection: Send + Sync {
 
     fn set_stats(&self, stats: Option<Timings>);
 
+    fn get_client(&self) -> &reqwest::Client;
+
     async fn is_alive_inner(&self) -> LiveCheckResult;
 
     async fn method_is_supported(&self, method: &str) -> Result<bool>;
 
-    async fn request(&self, request: Vec<u8>) -> Result<reqwest::Response, reqwest::Error>;
-}
-
-impl PartialEq<Self> for dyn Connection {
-    fn eq(&self, other: &Self) -> bool {
-        self.endpoint() == other.endpoint()
-    }
-}
-
-impl Eq for dyn Connection {}
-
-impl PartialOrd<Self> for dyn Connection {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for dyn Connection {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        if self.eq(other) {
-            cmp::Ordering::Equal
-        } else {
-            let left_stats = self.get_stats();
-            let right_stats = other.get_stats();
-
-            match (left_stats, right_stats) {
-                (Some(left_stats), Some(right_stats)) => left_stats.cmp(&right_stats),
-                (None, Some(_)) => cmp::Ordering::Less,
-                (Some(_), None) => cmp::Ordering::Greater,
-                (None, None) => cmp::Ordering::Equal,
+    async fn request<T: Serialize + Send + Sync, B: Message>(
+        &self,
+        request: &ConnectionRequest<T, B>,
+    ) -> Result<reqwest::Response, reqwest::Error> {
+        let req = match request {
+            ConnectionRequest::JRPC(request) => {
+                self.get_client().post(self.endpoint()).json(request)
             }
-        }
+            ConnectionRequest::PROTO(request) => self
+                .get_client()
+                .post(self.endpoint())
+                .body(request.encode_to_vec()),
+        };
+
+        let res = req.send().await?;
+        Ok(res)
     }
 }
 
-impl std::fmt::Display for dyn Connection {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.endpoint())
-    }
+pub enum ConnectionRequest<T: Serialize + Send + Sync, B: Message> {
+    JRPC(T),
+    PROTO(B),
 }
 
-struct State {
-    endpoints: Vec<Arc<dyn Connection>>,
-    live_endpoints: RwLock<Vec<Arc<dyn Connection>>>,
+struct State<T> {
+    endpoints: Vec<T>,
+    live_endpoints: RwLock<Vec<T>>,
     options: ClientOptions,
 }
 
-impl State {
-    async fn get_client(&self) -> Option<Arc<dyn Connection>> {
+impl<T: Connection + Ord + Clone> State<T> {
+    async fn get_client(&self) -> Option<T> {
         for _ in 0..10 {
             let client = {
                 let live_endpoints = self.live_endpoints.read();
-                self.options.choose_strategy.choose(live_endpoints.clone())
+                self.options.choose_strategy.choose(&live_endpoints)
             };
 
             if client.is_some() {
@@ -188,10 +173,8 @@ pub enum ChooseStrategy {
 }
 
 impl ChooseStrategy {
-    fn choose(&self, endpoints: Vec<Arc<dyn Connection>>) -> Option<Arc<dyn Connection>> {
+    fn choose<T: Connection + Ord + Clone>(&self, endpoints: &[T]) -> Option<T> {
         use rand::prelude::SliceRandom;
-
-        //unimplemented!()
 
         match self {
             ChooseStrategy::Random => endpoints.choose(&mut rand::thread_rng()).cloned(),

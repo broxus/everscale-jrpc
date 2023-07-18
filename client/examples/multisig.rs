@@ -9,6 +9,8 @@ use nekoton::core::ton_wallet::{Gift, MultisigType, TransferAction, WalletType};
 use nekoton::crypto::MnemonicType;
 use ton_block::{GetRepresentationHash, MsgAddressInt};
 
+use everscale_rpc_client::{ClientOptions, SendOptions, SendStatus, TransportErrorAction};
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::SubscriberBuilder::default()
@@ -20,9 +22,9 @@ async fn main() {
 
     let to = MsgAddressInt::from_str(&to).expect("invalid address");
 
-    let client = everscale_jrpc_client::JrpcClient::new(
+    let client = everscale_rpc_client::jrpc::JrpcClient::new(
         ["https://jrpc.everwallet.net/rpc".parse().unwrap()],
-        JrpcClientOptions::default(),
+        ClientOptions::default(),
     )
     .await
     .unwrap();

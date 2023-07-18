@@ -8,7 +8,6 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use nekoton::transport::models::ExistingContract;
 use nekoton::utils::SimpleClock;
-use nekoton_utils::TrustMe;
 use parking_lot::Mutex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -24,7 +23,7 @@ use crate::*;
 
 #[derive(Clone)]
 pub struct JrpcClient {
-    state: Arc<State>,
+    state: Arc<State<JrpcConnection>>,
     is_capable_of_message_tracking: bool,
 }
 
@@ -59,7 +58,7 @@ impl JrpcClient {
             state: Arc::new(State {
                 endpoints: endpoints
                     .into_iter()
-                    .map(|e| Arc::new(JrpcConnection::new(e.to_string(), client.clone())) as _)
+                    .map(|e| JrpcConnection::new(e.to_string(), client.clone()))
                     .collect(),
                 live_endpoints: Default::default(),
                 options: options.clone(),
@@ -395,10 +394,12 @@ impl JrpcClient {
 
     pub async fn request<'a, T, D>(&self, method: &'a str, params: T) -> Result<Answer<D>, RunError>
     where
-        T: Serialize + Clone,
+        T: Serialize + Send + Sync + Clone,
         for<'de> D: Deserialize<'de>,
     {
-        let request = serde_json::to_vec(&JrpcRequest { method, params })?;
+        let request: ConnectionRequest<_, everscale_proto::rpc::Request> =
+            ConnectionRequest::JRPC(JrpcRequest { method, params });
+
         const NUM_RETRIES: usize = 10;
 
         for tries in 0..=NUM_RETRIES {
@@ -408,7 +409,7 @@ impl JrpcClient {
                 .await
                 .ok_or::<RunError>(ClientError::NoEndpointsAvailable.into())?;
 
-            let res = match client.request(request.clone()).await {
+            let res = match client.request(&request).await {
                 Ok(res) => res.json::<JsonRpcResponse>().await,
                 Err(e) => Err(e),
             };
@@ -474,6 +475,44 @@ impl JrpcConnection {
     }
 }
 
+impl PartialEq<Self> for JrpcConnection {
+    fn eq(&self, other: &Self) -> bool {
+        self.endpoint() == other.endpoint()
+    }
+}
+
+impl Eq for JrpcConnection {}
+
+impl PartialOrd<Self> for JrpcConnection {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for JrpcConnection {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        if self.eq(other) {
+            cmp::Ordering::Equal
+        } else {
+            let left_stats = self.get_stats();
+            let right_stats = other.get_stats();
+
+            match (left_stats, right_stats) {
+                (Some(left_stats), Some(right_stats)) => left_stats.cmp(&right_stats),
+                (None, Some(_)) => cmp::Ordering::Less,
+                (Some(_), None) => cmp::Ordering::Greater,
+                (None, None) => cmp::Ordering::Equal,
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for JrpcConnection {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.endpoint())
+    }
+}
+
 #[async_trait::async_trait]
 impl Connection for JrpcConnection {
     fn update_was_dead(&self, is_dead: bool) {
@@ -492,17 +531,23 @@ impl Connection for JrpcConnection {
         *self.stats.lock() = stats;
     }
 
-    async fn is_alive_inner(&self) -> LiveCheckResult {
-        let request = serde_json::to_vec(&JrpcRequest {
-            method: "getTimings",
-            params: (),
-        })
-        .trust_me();
+    fn get_client(&self) -> &reqwest::Client {
+        &self.client
+    }
 
-        let res = match self.request(request).await {
+    async fn is_alive_inner(&self) -> LiveCheckResult {
+        let request: ConnectionRequest<_, everscale_proto::rpc::Request> =
+            ConnectionRequest::JRPC(JrpcRequest {
+                method: "getTimings",
+                params: (),
+            });
+
+        let res = match self.request(&request).await {
             Ok(res) => res.json::<JsonRpcResponse>().await,
             Err(e) => Err(e),
         };
+
+        tracing::info!(res = ?res);
 
         let result = match res {
             Ok(a) => a,
@@ -544,13 +589,13 @@ impl Connection for JrpcConnection {
             }
         }
 
-        let request = serde_json::to_vec(&JrpcRequest {
-            method: "getLatestKeyBlock",
-            params: (),
-        })
-        .trust_me();
+        let request: ConnectionRequest<_, everscale_proto::rpc::Request> =
+            ConnectionRequest::JRPC(JrpcRequest {
+                method: "getLatestKeyBlock",
+                params: (),
+            });
 
-        let res = match self.request(request).await {
+        let res = match self.request(&request).await {
             Ok(res) => res.json::<JsonRpcResponse>().await,
             Err(e) => Err(e),
         };
@@ -591,12 +636,6 @@ impl Connection for JrpcConnection {
             }
         };
 
-        Ok(res)
-    }
-
-    async fn request(&self, request: Vec<u8>) -> Result<reqwest::Response, reqwest::Error> {
-        let req = self.client.post(self.endpoint.as_str()).body(request);
-        let res = req.send().await?;
         Ok(res)
     }
 }
