@@ -39,6 +39,7 @@ fn serialize_contract_state(bench: &mut Criterion) {
     });
 }
 
+#[allow(dead_code)]
 fn deserialize_contract_state(bench: &mut Criterion) {
     let account = create_account_stuff();
 

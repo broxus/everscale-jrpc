@@ -16,7 +16,6 @@ fn compress_lz4_contract_state(bench: &mut Criterion) {
     let account = create_account_stuff();
 
     let state_response = rpc::Response {
-        id: 0,
         result: Some(rpc::response::Result::GetContractState(
             rpc::response::GetContractState {
                 contract_state: Some(rpc::response::get_contract_state::ContractState {
@@ -51,7 +50,6 @@ fn decompress_lz4_contract_state(bench: &mut Criterion) {
     let account = create_account_stuff();
 
     let state_response = rpc::Response {
-        id: 0,
         result: Some(rpc::response::Result::GetContractState(
             rpc::response::GetContractState {
                 contract_state: Some(rpc::response::get_contract_state::ContractState {
@@ -90,7 +88,6 @@ fn compress_lz4_flex_contract_state(bench: &mut Criterion) {
     let account = create_account_stuff();
 
     let state_response = rpc::Response {
-        id: 0,
         result: Some(rpc::response::Result::GetContractState(
             rpc::response::GetContractState {
                 contract_state: Some(rpc::response::get_contract_state::ContractState {
@@ -118,7 +115,6 @@ fn decompress_lz4_flex_contract_state(bench: &mut Criterion) {
     let account = create_account_stuff();
 
     let state_response = rpc::Response {
-        id: 0,
         result: Some(rpc::response::Result::GetContractState(
             rpc::response::GetContractState {
                 contract_state: Some(rpc::response::get_contract_state::ContractState {
@@ -147,7 +143,6 @@ fn compress_zstd_contract_state(bench: &mut Criterion) {
     let account = create_account_stuff();
 
     let state_response = rpc::Response {
-        id: 0,
         result: Some(rpc::response::Result::GetContractState(
             rpc::response::GetContractState {
                 contract_state: Some(rpc::response::get_contract_state::ContractState {
@@ -175,7 +170,6 @@ fn decompress_zstd_contract_state(bench: &mut Criterion) {
     let account = create_account_stuff();
 
     let state_response = rpc::Response {
-        id: 0,
         result: Some(rpc::response::Result::GetContractState(
             rpc::response::GetContractState {
                 contract_state: Some(rpc::response::get_contract_state::ContractState {
