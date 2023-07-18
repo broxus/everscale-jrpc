@@ -365,7 +365,7 @@ impl ProtoServer {
         let mut key = [0u8; { tables::CodeHashes::KEY_LEN }];
         key[0..32].copy_from_slice(&req.code_hash);
         if let Some(continuation) = &req.continuation {
-            let address = parse_address(&continuation)?;
+            let address = parse_address(continuation)?;
             utils::extract_address(&address, &mut key[32..])
                 .map_err(|_| QueryError::InvalidParams)?;
         }

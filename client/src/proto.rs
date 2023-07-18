@@ -544,7 +544,7 @@ impl ProtoClient {
                 Ok(a) => a,
                 Err(e) => {
                     // TODO: tracing::error!(request, "Error while sending request to endpoint: {e:?}");
-                    self.state.remove_endpoint(&client.endpoint());
+                    self.state.remove_endpoint(client.endpoint());
 
                     if tries == NUM_RETRIES {
                         return Err(e.into());

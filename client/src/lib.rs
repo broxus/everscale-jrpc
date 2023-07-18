@@ -87,7 +87,7 @@ impl Ord for dyn Connection {
 
 impl std::fmt::Display for dyn Connection {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.endpoint())
+        f.write_str(self.endpoint())
     }
 }
 
