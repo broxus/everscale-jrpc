@@ -547,8 +547,6 @@ impl Connection for JrpcConnection {
             Err(e) => Err(e),
         };
 
-        tracing::info!(res = ?res);
-
         let result = match res {
             Ok(a) => a,
             Err(e) => {
