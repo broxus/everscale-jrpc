@@ -15,14 +15,16 @@ use everscale_rpc_models::{jrpc, Timings};
 
 use crate::*;
 
+pub type JrpcClient = JrpcClientImpl<JrpcConnection>;
+
 #[derive(Clone)]
-pub struct JrpcClient<T: Connection + Ord + Clone> {
+pub struct JrpcClientImpl<T: Connection + Ord + Clone> {
     state: Arc<State<T>>,
     is_capable_of_message_tracking: bool,
 }
 
 #[async_trait::async_trait]
-impl<T> Client<T> for JrpcClient<T>
+impl<T> Client<T> for JrpcClientImpl<T>
 where
     T: Connection + Ord + Clone + 'static,
 {
@@ -126,7 +128,7 @@ where
     }
 }
 
-impl<T: Connection + Ord + Clone + 'static> JrpcClient<T> {
+impl<T: Connection + Ord + Clone + 'static> JrpcClientImpl<T> {
     pub async fn get_latest_key_block(&self) -> Result<jrpc::GetLatestKeyBlockResponse, RunError> {
         self.request("getLatestKeyBlock", ())
             .await
@@ -239,7 +241,7 @@ fn decode_raw_transaction(boc: &str) -> Result<Transaction> {
 }
 
 #[derive(Clone, Debug)]
-struct JrpcConnection {
+pub struct JrpcConnection {
     endpoint: Arc<String>,
     client: reqwest::Client,
     was_dead: Arc<AtomicBool>,

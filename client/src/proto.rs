@@ -23,14 +23,16 @@ use everscale_proto::{
 
 use crate::*;
 
+pub type ProtoClient = ProtoClientImpl<ProtoConnection>;
+
 #[derive(Clone)]
-pub struct ProtoClient<T: Connection + Ord + Clone> {
+pub struct ProtoClientImpl<T: Connection + Ord + Clone> {
     state: Arc<State<T>>,
     is_capable_of_message_tracking: bool,
 }
 
 #[async_trait::async_trait]
-impl<T> Client<T> for ProtoClient<T>
+impl<T> Client<T> for ProtoClientImpl<T>
 where
     T: Connection + Ord + Clone + 'static,
 {
@@ -235,7 +237,7 @@ where
     }
 }
 
-impl<T: Connection + Ord + Clone + 'static> ProtoClient<T> {
+impl<T: Connection + Ord + Clone + 'static> ProtoClientImpl<T> {
     pub async fn get_latest_key_block(&self) -> Result<ton_block::Block, RunError> {
         let request = rpc::Request {
             call: Some(rpc::request::Call::GetLatestKeyBlock(())),
@@ -389,7 +391,7 @@ fn deserialize_account_stuff(bytes: &bytes::Bytes) -> Result<ton_block::AccountS
 }
 
 #[derive(Clone, Debug)]
-struct ProtoConnection {
+pub struct ProtoConnection {
     endpoint: Arc<String>,
     client: reqwest::Client,
     was_dead: Arc<AtomicBool>,
