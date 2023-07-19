@@ -1,5 +1,5 @@
 use anyhow::Result;
-use everscale_rpc_client::ClientOptions;
+use everscale_rpc_client::{Client, ClientOptions};
 
 #[tokio::main]
 async fn main() -> Result<()> {

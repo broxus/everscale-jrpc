@@ -8,7 +8,7 @@ use nekoton::core::ton_wallet::{Gift, MultisigType, TransferAction, WalletType};
 use nekoton::crypto::MnemonicType;
 use ton_block::{GetRepresentationHash, MsgAddressInt};
 
-use everscale_rpc_client::{ClientOptions, SendOptions, SendStatus, TransportErrorAction};
+use everscale_rpc_client::{Client, ClientOptions, SendOptions, SendStatus, TransportErrorAction};
 
 #[tokio::main]
 async fn main() {
