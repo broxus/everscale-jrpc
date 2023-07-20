@@ -23,7 +23,7 @@ impl ton_indexer::Subscriber for EngineSubscriber {
             .context("Failed to update JRPC state")
     }
 
-    async fn process_full_state(&self, state: &ShardStateStuff) -> Result<()> {
+    async fn process_full_state(&self, state: Arc<ShardStateStuff>) -> Result<()> {
         self.jrpc_state
             .process_full_state(state)
             .await

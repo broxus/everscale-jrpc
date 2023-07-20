@@ -300,8 +300,8 @@ impl PersistentStorage {
         self.snapshot.store(Some(snapshot));
     }
 
-    pub async fn reset_accounts(&self, shard_state: &ShardStateStuff) -> Result<()> {
-        let shard = shard_state.shard();
+    pub async fn reset_accounts(&self, shard_state: Arc<ShardStateStuff>) -> Result<()> {
+        let shard = *shard_state.shard();
         let workchain = shard.workchain_id();
         let Ok(workchain) = i8::try_from(workchain) else {
             return Ok(());
@@ -309,7 +309,7 @@ impl PersistentStorage {
 
         let now = Instant::now();
         tracing::info!(%shard, "clearing old code hash indices");
-        self.remove_code_hashes(shard_state.shard()).await?;
+        self.remove_code_hashes(&shard).await?;
         tracing::info!(
             %shard,
             elapsed = %humantime::format_duration(now.elapsed()),
@@ -317,14 +317,22 @@ impl PersistentStorage {
         );
 
         // Split on virtual shards
-        let mut virtual_shards = FxHashMap::default();
-        split_shard(
-            *shard,
-            shard_state.state().read_accounts()?,
-            self.shard_split_depth,
-            &mut virtual_shards,
-        )
-        .context("Failed to split shard state into virtual shards")?;
+        let (_state_guard, virtual_shards) = {
+            let guard = shard_state.ref_mc_state_handle().clone();
+
+            let mut virtual_shards = FxHashMap::default();
+            split_shard(
+                shard,
+                shard_state.state().read_accounts()?,
+                self.shard_split_depth,
+                &mut virtual_shards,
+            )
+            .context("Failed to split shard state into virtual shards")?;
+
+            // NOTE: ensure that root cell is dropped
+            drop(shard_state);
+            (guard, virtual_shards)
+        };
 
         // Prepare column families
         let mut write_batch = rocksdb::WriteBatch::default();

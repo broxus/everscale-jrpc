@@ -182,7 +182,7 @@ impl JrpcState {
         }
     }
 
-    pub async fn process_full_state(&self, shard_state: &ShardStateStuff) -> Result<()> {
+    pub async fn process_full_state(&self, shard_state: Arc<ShardStateStuff>) -> Result<()> {
         if let Some(storage) = &self.persistent_storage {
             storage.reset_accounts(shard_state).await?;
         }

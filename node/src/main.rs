@@ -99,7 +99,7 @@ async fn run(app: App) -> Result<()> {
             .await
             .context("Failed building")?,
         global_config,
-        vec![Arc::new(EngineSubscriber::new(jrpc_state.clone()))],
+        Arc::new(EngineSubscriber::new(jrpc_state.clone())),
     )
     .await?;
 
