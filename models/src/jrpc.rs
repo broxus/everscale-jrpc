@@ -381,7 +381,7 @@ impl Request for GetTimingsRequest {
     type Response = GetTimingsResponse;
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, Default, Eq, PartialEq)]
 pub struct GetTimingsResponse {
     pub last_mc_block_seqno: u32,
     pub last_shard_client_mc_block_seqno: u32,
@@ -393,6 +393,7 @@ pub struct GetTimingsResponse {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::{now, Timings};
 
     #[test]
     fn older_than() {
@@ -404,9 +405,9 @@ mod test {
             shard_client_time_diff: 100,
         };
 
-        assert!(metrics.has_state_for(0));
-        assert!(!metrics.has_state_for(now() as u32 - 1));
-        assert!(!metrics.has_state_for(now() as u32 - 99));
-        assert!(metrics.has_state_for(now() as u32 - 101));
+        assert!(Timings::from(metrics).has_state_for(0));
+        assert!(!Timings::from(metrics).has_state_for(now() as u32 - 1));
+        assert!(!Timings::from(metrics).has_state_for(now() as u32 - 99));
+        assert!(Timings::from(metrics).has_state_for(now() as u32 - 101));
     }
 }

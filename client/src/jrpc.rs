@@ -462,3 +462,171 @@ pub struct JsonRpcError {
     pub code: i32,
     pub message: String,
 }
+
+#[cfg(test)]
+mod test {
+    use std::str::FromStr;
+    use std::time::Duration;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test() {
+        tracing_subscriber::fmt::init();
+
+        let rpc = [
+            "http://127.0.0.1:8081",
+            "http://34.78.198.249:8081/rpc",
+            "https://jrpc.everwallet.net/rpc",
+        ]
+        .iter()
+        .map(|x| x.parse().unwrap())
+        .collect::<Vec<_>>();
+
+        let balanced_client = JrpcClient::new(
+            rpc,
+            ClientOptions {
+                probe_interval: Duration::from_secs(10),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        for _ in 0..10 {
+            let response = balanced_client.get_latest_key_block().await.unwrap();
+            tracing::info!("response is ok: {response:?}");
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get() {
+        let pr = get_client().await;
+
+        pr.get_contract_state(
+            &MsgAddressInt::from_str(
+                "0:8e2586602513e99a55fa2be08561469c7ce51a7d5a25977558e77ef2bc9387b4",
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        pr.get_contract_state(
+            &MsgAddressInt::from_str(
+                "-1:efd5a14409a8a129686114fc092525fddd508f1ea56d1b649a3a695d3a5b188c",
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert!(pr
+            .get_contract_state(
+                &MsgAddressInt::from_str(
+                    "-1:aaa5a14409a8a129686114fc092525fddd508f1ea56d1b649a3a695d3a5b188c",
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn test_key_block() {
+        let pr = get_client().await;
+
+        pr.get_latest_key_block().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_all_dead() {
+        let pr = JrpcClient::new(
+            [
+                "https://lolkek228.dead/rpc".parse().unwrap(),
+                "http://127.0.0.1:8081".parse().unwrap(),
+                "http://127.0.0.1:12333".parse().unwrap(),
+            ],
+            ClientOptions {
+                probe_interval: Duration::from_secs(10),
+                ..Default::default()
+            },
+        )
+        .await
+        .is_err();
+
+        assert!(pr);
+    }
+
+    #[tokio::test]
+    async fn test_transations() {
+        let pr = get_client().await;
+
+        pr.get_transactions(
+            100,
+            &MsgAddressInt::from_str(
+                "-1:3333333333333333333333333333333333333333333333333333333333333333",
+            )
+            .unwrap(),
+            None,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn get_dst_transaction() {
+        let pr = get_client().await;
+        let tx = pr
+            .get_dst_transaction(
+                &hex::decode("40172727c17aa9ad0dd11c10e822226a7d22cc1e41f8c5d35b7f5614d8a12533")
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(tx.lt, 33247841000007);
+    }
+
+    async fn get_client() -> JrpcClient {
+        let pr = JrpcClient::new(
+            [
+                "https://jrpc.everwallet.net/rpc".parse().unwrap(),
+                "http://127.0.0.1:8081".parse().unwrap(),
+            ],
+            ClientOptions {
+                probe_interval: Duration::from_secs(10),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        pr
+    }
+
+    #[test]
+    fn test_serde() {
+        let err = r#"
+        {
+	        "jsonrpc": "2.0",
+	        "error": {
+	        	"code": -32601,
+	        	"message": "Method `getContractState1` not found",
+	        	"data": null
+	        },
+	        "id": 1
+        }"#;
+
+        let resp: JsonRpcResponse = serde_json::from_str(err).unwrap();
+        match resp.result {
+            JsonRpcAnswer::Error(e) => {
+                assert_eq!(e.code, -32601);
+            }
+            _ => panic!("expected error"),
+        }
+    }
+}
