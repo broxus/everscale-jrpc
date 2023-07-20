@@ -83,6 +83,8 @@ pub enum ApiConfig {
         persistent_db_path: PathBuf,
         #[serde(default)]
         persistent_db_options: DbOptions,
+        #[serde(default)]
+        shard_split_depth: u8,
     },
 }
 
@@ -127,10 +129,12 @@ impl JrpcState {
             ApiConfig::Full {
                 persistent_db_path,
                 persistent_db_options,
+                shard_split_depth,
                 ..
             } => Some(PersistentStorage::new(
                 persistent_db_path,
                 persistent_db_options,
+                *shard_split_depth,
             )?),
         };
 

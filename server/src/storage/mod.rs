@@ -208,12 +208,14 @@ pub struct PersistentStorage {
 
     pub snapshot: ArcSwapOption<OwnedSnapshot>,
     pub inner: WeeDb,
+
+    pub shard_split_depth: u8,
 }
 
 impl PersistentStorage {
     const DB_VERSION: Semver = [0, 1, 0];
 
-    pub fn new(path: &Path, options: &DbOptions) -> Result<Self> {
+    pub fn new(path: &Path, options: &DbOptions, shard_split_depth: u8) -> Result<Self> {
         let limit = match fdlimit::raise_fd_limit() {
             // New fd limit
             Some(limit) => limit,
@@ -285,6 +287,7 @@ impl PersistentStorage {
             code_hashes_by_address: inner.instantiate_table(),
             snapshot: Default::default(),
             inner,
+            shard_split_depth,
         })
     }
 
@@ -307,9 +310,21 @@ impl PersistentStorage {
         let now = Instant::now();
         tracing::info!(%shard, "clearing old code hash indices");
         self.remove_code_hashes(shard_state.shard()).await?;
-        tracing::info!(%shard, elapsed_ms = now.elapsed().as_millis(), "cleared old code hash indices");
+        tracing::info!(
+            %shard,
+            elapsed = %humantime::format_duration(now.elapsed()),
+            "cleared old code hash indices",
+        );
 
-        let accounts = shard_state.state().read_accounts()?;
+        // Split on virtual shards
+        let mut virtual_shards = FxHashMap::default();
+        split_shard(
+            *shard,
+            shard_state.state().read_accounts()?,
+            self.shard_split_depth,
+            &mut virtual_shards,
+        )
+        .context("Failed to split shard state into virtual shards")?;
 
         // Prepare column families
         let mut write_batch = rocksdb::WriteBatch::default();
@@ -325,38 +340,52 @@ impl PersistentStorage {
         code_hashes_by_address_id[0] = workchain as u8;
 
         // Iterate all changed accounts in block
+        let mut non_empty_batch = false;
         let now = Instant::now();
         tracing::info!(%shard, "building new code hash indices");
-        let mut non_empty_batch = false;
-        for entry in accounts.iter() {
-            let (id, mut account) = entry?;
-            let id: &[u8; 32] = match id.data().try_into() {
-                Ok(data) => data,
-                Err(_) => continue,
-            };
 
-            let code_hash = {
-                ton_block::DepthBalanceInfo::construct_from(&mut account)?; // skip an augmentation
-                match extract_code_hash(ton_block::ShardAccount::construct_from(&mut account)?)? {
-                    Some(code_hash) => code_hash,
-                    None => continue,
-                }
-            };
+        for (virtual_shard, accounts) in virtual_shards {
+            let now = Instant::now();
+            tracing::info!(%shard, %virtual_shard, "collecting code hashes");
 
-            non_empty_batch |= true;
+            for entry in accounts.iter() {
+                let (id, mut account) = entry?;
+                let id: &[u8; 32] = match id.data().try_into() {
+                    Ok(data) => data,
+                    Err(_) => continue,
+                };
 
-            // Fill account address in full code hashes buffer
-            code_hashes_id[..32].copy_from_slice(code_hash.as_slice());
-            code_hashes_id[33..65].copy_from_slice(id);
+                let code_hash = {
+                    ton_block::DepthBalanceInfo::construct_from(&mut account)?; // skip an augmentation
+                    match extract_code_hash(ton_block::ShardAccount::construct_from(&mut account)?)?
+                    {
+                        Some(code_hash) => code_hash,
+                        None => continue,
+                    }
+                };
 
-            code_hashes_by_address_id[1..33].copy_from_slice(id);
+                non_empty_batch |= true;
 
-            // Write tx data and indices
-            write_batch.put_cf(code_hashes_cf, code_hashes_id.as_slice(), []);
-            write_batch.put_cf(
-                code_hashes_by_address_cf,
-                code_hashes_by_address_id.as_slice(),
-                code_hash.as_slice(),
+                // Fill account address in full code hashes buffer
+                code_hashes_id[..32].copy_from_slice(code_hash.as_slice());
+                code_hashes_id[33..65].copy_from_slice(id);
+
+                code_hashes_by_address_id[1..33].copy_from_slice(id);
+
+                // Write tx data and indices
+                write_batch.put_cf(code_hashes_cf, code_hashes_id.as_slice(), []);
+                write_batch.put_cf(
+                    code_hashes_by_address_cf,
+                    code_hashes_by_address_id.as_slice(),
+                    code_hash.as_slice(),
+                );
+            }
+
+            tracing::info!(
+                %shard,
+                %virtual_shard,
+                elapsed = %humantime::format_duration(now.elapsed()),
+                "collected code hashes",
             );
         }
 
@@ -364,7 +393,11 @@ impl PersistentStorage {
             db.write_opt(write_batch, self.code_hashes.write_config())
                 .context("Failed to update JRPC storage")?;
         }
-        tracing::info!(%shard, elapsed_ms = now.elapsed().as_millis(), "built new code hash indices");
+        tracing::info!(
+            %shard,
+            elapsed = %humantime::format_duration(now.elapsed()),
+            "built new code hash indices",
+        );
 
         // Flush indices after delete/insert
         let now = Instant::now();
@@ -372,7 +405,11 @@ impl PersistentStorage {
         let bound = Option::<[u8; 0]>::None;
         db.compact_range_cf(code_hashes_cf, bound, bound);
         db.compact_range_cf(code_hashes_by_address_cf, bound, bound);
-        tracing::info!(%shard, elapsed_ms = now.elapsed().as_millis(), "flushed code hash indices");
+        tracing::info!(
+            %shard,
+            elapsed = %humantime::format_duration(now.elapsed()),
+            "flushed code hash indices",
+        );
 
         // Done
         Ok(())
@@ -726,6 +763,26 @@ fn extract_code_hash(account: ton_block::ShardAccount) -> Result<Option<ton_type
         }
     }
     Ok(None)
+}
+
+fn split_shard(
+    ident: ton_block::ShardIdent,
+    accounts: ton_block::ShardAccounts,
+    depth: u8,
+    shards: &mut FxHashMap<ton_block::ShardIdent, ton_block::ShardAccounts>,
+) -> Result<()> {
+    if depth == 0 {
+        shards.insert(ident, accounts);
+        return Ok(());
+    }
+
+    let (left_shard_ident, right_shard_ident) = ident.split()?;
+    let (left_accounts, right_accounts) = accounts.split(&ident.shard_key(false))?;
+
+    split_shard(left_shard_ident, left_accounts, depth - 1, shards)?;
+    split_shard(right_shard_ident, right_accounts, depth - 1, shards)?;
+
+    Ok(())
 }
 
 #[cfg(test)]

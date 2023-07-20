@@ -19,11 +19,13 @@ rpc_config:
   # States RPC endpoint
   listen_address: "0.0.0.0:8081"
   generate_stub_keyblock: true
-  # Or use minimal JRPC API without fields below:
+  # # Or use minimal JRPC API without fields below:
   # type: simple
   type: full
   # Path to the separate DB for transactions and other JRPC stuff
   persistent_db_path: "/var/db/jrpc-storage"
+  # # Virtual shards depth to use during shard state accounts processing
+  # shard_split_depth: 4
 
 metrics_settings:
   # Listen address of metrics. Used by the client to gather prometheus metrics.
