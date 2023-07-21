@@ -2,12 +2,13 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use ed25519_dalek::Signer;
-use everscale_jrpc_client::{JrpcClientOptions, SendOptions, SendStatus, TransportErrorAction};
 use nekoton::core::models::Expiration;
 use nekoton::core::ton_wallet::multisig::prepare_transfer;
 use nekoton::core::ton_wallet::{Gift, MultisigType, TransferAction, WalletType};
 use nekoton::crypto::MnemonicType;
 use ton_block::{GetRepresentationHash, MsgAddressInt};
+
+use everscale_rpc_client::{Client, ClientOptions, SendOptions, SendStatus, TransportErrorAction};
 
 #[tokio::main]
 async fn main() {
@@ -20,9 +21,9 @@ async fn main() {
 
     let to = MsgAddressInt::from_str(&to).expect("invalid address");
 
-    let client = everscale_jrpc_client::JrpcClient::new(
+    let client = everscale_rpc_client::jrpc::JrpcClient::new(
         ["https://jrpc.everwallet.net/rpc".parse().unwrap()],
-        JrpcClientOptions::default(),
+        ClientOptions::default(),
     )
     .await
     .unwrap();

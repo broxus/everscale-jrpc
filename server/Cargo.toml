@@ -1,5 +1,5 @@
 [package]
-name = "everscale-jrpc-server"
+name = "everscale-rpc-server"
 version = "0.2.2"
 edition = "2021"
 
@@ -9,6 +9,7 @@ arc-swap = { version = "1.6", features = ["weak"] }
 axum = { version = "0.6.0", features = ["http2"] }
 axum-jrpc = { version = "0.5.1", features = ["serde_json"] }
 base64 = "0.13"
+bytes = "1.4.0"
 fdlimit = "0.2.1"
 hex = "0.4"
 humantime = "2.1"
@@ -31,7 +32,8 @@ ton-indexer = { git = "https://github.com/broxus/ton-indexer.git" }
 ton_block = { git = "https://github.com/broxus/ton-labs-block.git" }
 ton_types = { git = "https://github.com/broxus/ton-labs-types.git" }
 
-everscale-jrpc-models = { path = "../models" }
+everscale-rpc-models = { path = "../models" }
+everscale-proto = { path = "../proto" }
 
 [dev-dependencies]
 hex = "0.4"

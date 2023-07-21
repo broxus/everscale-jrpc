@@ -12,7 +12,7 @@ use ton_indexer::OldBlocksPolicy;
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
     /// JRPC config
-    pub rpc_config: everscale_jrpc_server::Config,
+    pub rpc_config: everscale_rpc_server::Config,
 
     /// Prometheus metrics exporter settings.
     /// Completely disable when not specified

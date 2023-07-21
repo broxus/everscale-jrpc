@@ -1,48 +1,3 @@
-//! # Example
-//!
-//! ```rust
-//! use std::sync::Arc;
-//!
-//! use anyhow::Result;
-//! use everscale_jrpc_server::*;
-//! use async_trait::async_trait;
-//! struct ExampleSubscriber {
-//!     jrpc_state: Arc<JrpcState>,
-//! }
-//!
-//! #[async_trait]
-//! impl ton_indexer::Subscriber for ExampleSubscriber {
-//!     async fn process_block(&self, ctx: ton_indexer::ProcessBlockContext<'_>) -> Result<()> {
-//!         if let Some(shard_state) = ctx.shard_state_stuff() {
-//!             self.jrpc_state.handle_block(ctx.block_stuff(), shard_state)?;
-//!         }
-//!         Ok(())
-//!     }
-//! }
-//!
-//! async fn test(
-//!     config: ton_indexer::NodeConfig,
-//!     global_config: ton_indexer::GlobalConfig,
-//!     listen_address: std::net::SocketAddr,
-//! ) -> Result<()> {
-//!     let jrpc_state = Arc::new(JrpcState::new(None));
-//!     let subscriber: Arc<dyn ton_indexer::Subscriber> = Arc::new(ExampleSubscriber {
-//!         jrpc_state: jrpc_state.clone(),
-//!     });
-//!
-//!     let engine = ton_indexer::Engine::new(config, global_config, vec![subscriber]).await?;
-//!
-//!     engine.start().await?;
-//!
-//!     let jrpc = JrpcServer::with_state(jrpc_state).build(&engine, listen_address).await?;
-//!     tokio::spawn(jrpc);
-//!
-//!     // ...
-//!
-//!     Ok(())
-//! }
-//! ```
-
 use std::future::Future;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -54,13 +9,16 @@ use arc_swap::ArcSwapWeak;
 use serde::{Deserialize, Serialize};
 use ton_indexer::utils::{BlockStuff, ShardStateStuff};
 
-pub use everscale_jrpc_models as models;
+pub use everscale_rpc_models as models;
 
-use self::server::JrpcServer;
+use self::server::Server;
 use self::storage::{DbOptions, PersistentStorage, RuntimeStorage};
 
+mod jrpc;
+mod proto;
 mod server;
 mod storage;
+mod utils;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -114,15 +72,16 @@ impl ApiConfig {
     }
 }
 
-pub struct JrpcState {
+pub struct ServerState {
     config: Config,
     engine: ArcSwapWeak<ton_indexer::Engine>,
     runtime_storage: RuntimeStorage,
     persistent_storage: Option<PersistentStorage>,
-    counters: Counters,
+    jrpc_counters: Counters,
+    proto_counters: Counters,
 }
 
-impl JrpcState {
+impl ServerState {
     pub fn new(config: Config) -> Result<Self> {
         let persistent_storage = match &config.api_config {
             ApiConfig::Simple(..) => None,
@@ -143,7 +102,8 @@ impl JrpcState {
             engine: Default::default(),
             runtime_storage: Default::default(),
             persistent_storage,
-            counters: Default::default(),
+            jrpc_counters: Default::default(),
+            proto_counters: Default::default(),
         })
     }
 
@@ -169,11 +129,15 @@ impl JrpcState {
     }
 
     pub fn serve(self: Arc<Self>) -> Result<impl Future<Output = ()> + Send + 'static> {
-        JrpcServer::new(self)?.serve()
+        Server::new(self)?.serve()
     }
 
-    pub fn metrics(&self) -> JrpcMetrics {
-        self.counters.metrics()
+    pub fn jrpc_metrics(&self) -> Metrics {
+        self.jrpc_counters.metrics()
+    }
+
+    pub fn proto_metrics(&self) -> Metrics {
+        self.proto_counters.metrics()
     }
 
     pub fn process_blocks_edge(&self) {
@@ -231,8 +195,12 @@ impl JrpcState {
         self.engine.load().strong_count() > 0
     }
 
-    pub(crate) fn counters(&self) -> &Counters {
-        &self.counters
+    pub(crate) fn jrpc_counters(&self) -> &Counters {
+        &self.jrpc_counters
+    }
+
+    pub(crate) fn proto_counters(&self) -> &Counters {
+        &self.proto_counters
     }
 }
 
@@ -256,8 +224,8 @@ impl Counters {
         self.errors.fetch_add(1, Ordering::Relaxed);
     }
 
-    fn metrics(&self) -> JrpcMetrics {
-        JrpcMetrics {
+    fn metrics(&self) -> Metrics {
+        Metrics {
             total: self.total.load(Ordering::Relaxed),
             not_found: self.not_found.load(Ordering::Relaxed),
             errors: self.errors.load(Ordering::Relaxed),
@@ -266,8 +234,8 @@ impl Counters {
 }
 
 #[derive(Default, Copy, Clone)]
-pub struct JrpcMetrics {
-    /// Total amount JRPC requests
+pub struct Metrics {
+    /// Total amount requests
     pub total: u64,
     /// Number of requests resolved with an error
     pub not_found: u64,

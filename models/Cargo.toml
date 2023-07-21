@@ -1,5 +1,5 @@
 [package]
-name = "everscale-jrpc-models"
+name = "everscale-rpc-models"
 version = "0.1.0"
 edition = "2021"
 
@@ -9,3 +9,5 @@ serde = { version = "1.0", features = ["derive"] }
 nekoton-abi = { git = "https://github.com/broxus/nekoton.git", default-features = false }
 nekoton-utils = { git = "https://github.com/broxus/nekoton.git", default-features = false }
 ton_block = { git = "https://github.com/broxus/ton-labs-block.git" }
+
+everscale-proto = { path = "../proto" }

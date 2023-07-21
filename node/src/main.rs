@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use argh::FromArgs;
-use everscale_jrpc_server::JrpcState;
+use everscale_rpc_server::ServerState;
 use is_terminal::IsTerminal;
 use pomfrit::formatter::*;
 use ton_indexer::Engine;
@@ -86,10 +86,10 @@ async fn run(app: App) -> Result<()> {
 
     tracing::info!("initializing producer...");
 
-    // Prepare JRPC
-    let jrpc_state = JrpcState::new(config.rpc_config)
+    // Prepare Server
+    let server_state = ServerState::new(config.rpc_config)
         .map(Arc::new)
-        .context("Failed to create JRPC state")?;
+        .context("Failed to create Server state")?;
 
     // Create engine
     let engine = Engine::new(
@@ -99,7 +99,7 @@ async fn run(app: App) -> Result<()> {
             .await
             .context("Failed building")?,
         global_config,
-        Arc::new(EngineSubscriber::new(jrpc_state.clone())),
+        Arc::new(EngineSubscriber::new(server_state.clone())),
     )
     .await?;
 
@@ -113,13 +113,13 @@ async fn run(app: App) -> Result<()> {
     // Create metrics exporter
     let (_exporter, metrics_writer) = pomfrit::create_exporter(config.metrics_settings).await?;
     metrics_writer.spawn({
-        let jrpc_state = jrpc_state.clone();
+        let server_state = server_state.clone();
         let engine = engine.clone();
         move |buf| {
             buf.write(ExplorerMetrics {
                 engine: &engine,
                 panicked: &panicked,
-                jrpc_state: &jrpc_state,
+                server_state: &server_state,
             });
         }
     });
@@ -130,8 +130,8 @@ async fn run(app: App) -> Result<()> {
     tracing::info!("initialized engine");
 
     // Start RPC after the engine is running
-    jrpc_state.initialize(&engine).await?;
-    tokio::spawn(jrpc_state.serve()?);
+    server_state.initialize(&engine).await?;
+    tokio::spawn(server_state.serve()?);
     tracing::info!("initialized RPC");
 
     // Done
@@ -142,7 +142,7 @@ async fn run(app: App) -> Result<()> {
 struct ExplorerMetrics<'a> {
     engine: &'a Engine,
     panicked: &'a AtomicBool,
-    jrpc_state: &'a JrpcState,
+    server_state: &'a ServerState,
 }
 
 impl std::fmt::Display for ExplorerMetrics<'_> {
@@ -257,10 +257,15 @@ impl std::fmt::Display for ExplorerMetrics<'_> {
 
         f.begin_metric("jrpc_enabled").value(1)?;
 
-        let jrpc = self.jrpc_state.metrics();
+        let jrpc = self.server_state.jrpc_metrics();
         f.begin_metric("jrpc_total").value(jrpc.total)?;
         f.begin_metric("jrpc_errors").value(jrpc.errors)?;
         f.begin_metric("jrpc_not_found").value(jrpc.not_found)?;
+
+        let proto = self.server_state.proto_metrics();
+        f.begin_metric("proto_total").value(proto.total)?;
+        f.begin_metric("proto_errors").value(proto.errors)?;
+        f.begin_metric("proto_not_found").value(proto.not_found)?;
 
         Ok(())
     }

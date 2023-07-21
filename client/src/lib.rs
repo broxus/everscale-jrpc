@@ -4,39 +4,36 @@
 use std::cmp;
 use std::collections::HashSet;
 use std::fmt::Formatter;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use everscale_proto::prost::Message;
 use futures::StreamExt;
+use itertools::Itertools;
 use nekoton::transport::models::ExistingContract;
-use nekoton::utils::SimpleClock;
-use parking_lot::{Mutex, RwLock};
+use nekoton_utils::SimpleClock;
+use parking_lot::RwLock;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use ton_block::{
-    Account, CommonMsgInfo, Deserializable, GetRepresentationHash, Message, MsgAddressInt,
-    Transaction,
-};
+use ton_block::{GetRepresentationHash, MsgAddressInt, Transaction};
 
-use everscale_jrpc_models::*;
-use itertools::Itertools;
-use ton_types::UInt256;
+use everscale_rpc_models::Timings;
+
+pub mod jrpc;
+pub mod proto;
 
 static ROUND_ROBIN_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-#[derive(Clone)]
-pub struct JrpcClient {
-    state: Arc<RpcState>,
-    is_capable_of_message_tracking: bool,
-}
-
-impl JrpcClient {
-    /// `endpoints` - full URLs of the RPC endpoints.
-    pub async fn new<I: IntoIterator<Item = Url>>(
+#[async_trait::async_trait]
+pub trait Client<T>: Send + Sync + Sized
+where
+    T: Connection + Ord + Clone + 'static,
+{
+    async fn new<I: IntoIterator<Item = Url> + Send>(
         endpoints: I,
-        options: JrpcClientOptions,
+        options: ClientOptions,
     ) -> Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(options.request_timeout)
@@ -54,30 +51,29 @@ impl JrpcClient {
     }
 
     /// `endpoints` - full URLs of the RPC endpoints.
-    pub async fn with_client<I: IntoIterator<Item = Url>>(
+    async fn with_client<I: IntoIterator<Item = Url> + Send>(
         client: reqwest::Client,
         endpoints: I,
-        options: JrpcClientOptions,
+        options: ClientOptions,
     ) -> Result<Self> {
-        let mut client = Self {
-            state: Arc::new(RpcState {
-                endpoints: endpoints
-                    .into_iter()
-                    .map(|e| JrpcConnection::new(e.to_string(), client.clone()))
-                    .collect(),
-                live_endpoints: Default::default(),
-                options: options.clone(),
-            }),
-            is_capable_of_message_tracking: true,
-        };
+        let state = Arc::new(State {
+            endpoints: endpoints
+                .into_iter()
+                .map(|e| T::new(e.to_string(), client.clone()))
+                .collect(),
+            live_endpoints: Default::default(),
+            options: options.clone(),
+        });
 
-        let state = client.state.clone();
+        let mut is_capable_of_message_tracking = true;
+
         let mut live = state.update_endpoints().await;
 
         if live == 0 {
             anyhow::bail!("No live endpoints");
         }
 
+        let st = state.clone();
         tokio::spawn(async move {
             loop {
                 let sleep_time = if live != 0 {
@@ -87,44 +83,47 @@ impl JrpcClient {
                 };
 
                 tokio::time::sleep(sleep_time).await;
-                live = state.update_endpoints().await;
+                live = st.update_endpoints().await;
             }
         });
 
-        for endpoint in &client.state.endpoints {
+        for endpoint in &state.endpoints {
             if !endpoint
                 .method_is_supported("getDstTransaction")
                 .await
                 .unwrap_or_default()
             {
-                client.is_capable_of_message_tracking = false;
+                is_capable_of_message_tracking = false;
                 break;
             }
         }
 
-        Ok(client)
+        Ok(Self::construct_from_state(
+            state,
+            is_capable_of_message_tracking,
+        ))
     }
 
-    pub async fn get_contract_state(
+    fn construct_from_state(state: Arc<State<T>>, is_capable_of_message_tracking: bool) -> Self;
+
+    fn is_capable_of_message_tracking(&self) -> bool;
+
+    async fn get_blockchain_config(&self) -> Result<ton_executor::BlockchainConfig>;
+
+    async fn broadcast_message(&self, message: ton_block::Message) -> Result<(), RunError>;
+
+    async fn get_dst_transaction(&self, message_hash: &[u8]) -> Result<Option<Transaction>>;
+
+    async fn get_contract_state(&self, address: &MsgAddressInt)
+        -> Result<Option<ExistingContract>>;
+
+    async fn get_contract_state_with_time_check(
         &self,
         address: &MsgAddressInt,
-    ) -> Result<Option<ExistingContract>> {
-        let req = GetContractStateRequestRef { address };
-        match self.request("getContractState", req).await?.into_inner() {
-            GetContractStateResponse::NotExists => Ok(None),
-            GetContractStateResponse::Exists {
-                account,
-                timings,
-                last_transaction_id,
-            } => Ok(Some(ExistingContract {
-                account,
-                timings,
-                last_transaction_id,
-            })),
-        }
-    }
+        time: u32,
+    ) -> Result<Option<ExistingContract>, RunError>;
 
-    pub async fn run_local(
+    async fn run_local(
         &self,
         address: &MsgAddressInt,
         function: &ton_abi::Function,
@@ -143,77 +142,30 @@ impl JrpcClient {
             .map(Some)
     }
 
-    /// Works like `get_contract_state`, but also checks that node has state older than `time`.
-    /// If state is not fresh, returns `Err`.
-    /// This method should be used with `ChooseStrategy::TimeBased`.
-    pub async fn get_contract_state_with_time_check(
-        &self,
-        address: &MsgAddressInt,
-        time: u32,
-    ) -> Result<Option<ExistingContract>, RunError> {
-        let req = GetContractStateRequestRef { address };
-        let response = self.request("getContractState", req).await?;
-        match response.result {
-            GetContractStateResponse::NotExists => {
-                response.has_state_for(time)?;
-                Ok(None)
-            }
-            GetContractStateResponse::Exists {
-                account,
-                timings,
-                last_transaction_id,
-            } => Ok(Some(ExistingContract {
-                account,
-                timings,
-                last_transaction_id,
-            })),
-        }
-    }
+    /// applies `message` to account set as dst and returns the resulting transaction.
+    /// Useful for testing purposes.
+    async fn apply_message(&self, message: &ton_block::Message) -> Result<ton_block::Transaction> {
+        let message_dst = message
+            .dst()
+            .context("Only inbound external messages are allowed")?;
 
-    /// Works like `run_local`, but also checks that node has fresh state.
-    pub async fn run_local_with_time_check(
-        &self,
-        address: &MsgAddressInt,
-        function: &ton_abi::Function,
-        input: &[ton_abi::Token],
-        time: u32,
-    ) -> Result<Option<nekoton::abi::ExecutionOutput>, RunError> {
-        use nekoton::abi::FunctionExt;
-
-        let state = match self
-            .get_contract_state_with_time_check(address, time)
-            .await?
-        {
-            Some(a) => a,
-            None => return Ok(None),
+        let config = self.get_blockchain_config().await?;
+        let dst_account = match self.get_contract_state(&message_dst).await? {
+            None => ton_block::Account::AccountNone,
+            Some(ac) => ton_block::Account::Account(ac.account),
         };
 
-        let result = function
-            .clone()
-            .run_local(&SimpleClock, state.account, input)
-            .map(Some)?;
-        Ok(result)
-    }
+        let executor = nekoton_abi::Executor::new(&SimpleClock, config, dst_account)
+            .context("Failed to create executor")?;
 
-    pub async fn broadcast_message(&self, message: Message) -> Result<(), RunError> {
-        match message.header() {
-            CommonMsgInfo::IntMsgInfo(_) => {
-                return Err(RunError::NotInboundMessage("IntMsgInfo".to_string()));
-            }
-            CommonMsgInfo::ExtOutMsgInfo(_) => {
-                return Err(RunError::NotInboundMessage("ExtOutMsgInfo".to_string()));
-            }
-            CommonMsgInfo::ExtInMsgInfo(_) => {}
-        }
-        let req = SendMessageRequest { message };
-        self.request("sendMessage", req).await.map(|x| x.result)
+        executor.run(message)
     }
 
     /// Works with any jrpc node, but not as reliable as `send_message`.
     /// You should use `send_message` if possible.
-    pub async fn send_message_unrelaible(
+    async fn send_message_unrelaible(
         &self,
-        message: Message,
+        message: ton_block::Message,
         options: SendOptions,
     ) -> Result<SendStatus> {
         let dst = &message
@@ -260,8 +212,12 @@ impl JrpcClient {
     }
 
     /// NOTE: This method won't work on regular jrpc endpoint without database.
-    pub async fn send_message(&self, message: Message, options: SendOptions) -> Result<SendStatus> {
-        anyhow::ensure!(self.is_capable_of_message_tracking,
+    async fn send_message(
+        &self,
+        message: ton_block::Message,
+        options: SendOptions,
+    ) -> Result<SendStatus> {
+        anyhow::ensure!(self.is_capable_of_message_tracking(),
         "One of your endpoints doesn't support message tracking (it's a light node). Use `send_message_unreliable` instead or change endpoints"
         );
 
@@ -303,185 +259,148 @@ impl JrpcClient {
         }
     }
 
-    /// applies `message` to account set as dst and returns the resulting transaction.
-    /// Useful for testing purposes.
-    pub async fn apply_message(&self, message: &Message) -> Result<ton_block::Transaction> {
-        let message_dst = message
-            .dst()
-            .context("Only inbound external messages are allowed")?;
-
-        let config = self.get_blockchain_config().await?;
-        let dst_account = match self.get_contract_state(&message_dst).await? {
-            None => Account::AccountNone,
-            Some(ac) => Account::Account(ac.account),
-        };
-
-        let executor = nekoton_abi::Executor::new(&SimpleClock, config, dst_account)
-            .context("Failed to create executor")?;
-
-        executor.run(message)
-    }
-
-    pub async fn get_latest_key_block(&self) -> Result<GetLatestKeyBlockResponse, RunError> {
-        self.request("getLatestKeyBlock", ())
-            .await
-            .map(|x| x.result)
-    }
-
-    pub async fn get_blockchain_config(&self) -> Result<ton_executor::BlockchainConfig> {
-        let key_block = self.get_latest_key_block().await?;
-        let block = key_block.block;
-
-        let extra = block.read_extra()?;
-
-        let master = extra.read_custom()?.context("No masterchain block extra")?;
-
-        let params = master.config().context("Invalid config")?.clone();
-
-        let config = ton_executor::BlockchainConfig::with_config(params, block.global_id)
-            .context("Invalid config")?;
-
-        Ok(config)
-    }
-
-    pub async fn get_dst_transaction(&self, message_hash: &[u8]) -> Result<Option<Transaction>> {
-        let message_hash = message_hash.try_into().context("Invalid message hash")?;
-        let req = GetDstTransactionRequest { message_hash };
-        let result: Vec<u8> = match self.request("getDstTransaction", req).await?.into_inner() {
-            Some(s) => base64::decode::<String>(s)?,
-            None => return Ok(None),
-        };
-        let result = Transaction::construct_from_bytes(result.as_slice())?;
-
-        Ok(Some(result))
-    }
-
-    pub async fn get_transactions(
+    /// Works like `run_local`, but also checks that node has fresh state.
+    async fn run_local_with_time_check(
         &self,
-        limit: u8,
-        account: &MsgAddressInt,
-        last_transaction_lt: Option<u64>,
-    ) -> Result<Vec<ton_block::Transaction>> {
-        let request = GetTransactionsListRequestRef {
-            account,
-            limit,
-            last_transaction_lt,
-        };
+        address: &MsgAddressInt,
+        function: &ton_abi::Function,
+        input: &[ton_abi::Token],
+        time: u32,
+    ) -> Result<Option<nekoton::abi::ExecutionOutput>, RunError> {
+        use nekoton::abi::FunctionExt;
 
-        let data: Vec<String> = self
-            .request("getTransactionsList", request)
+        let state = match self
+            .get_contract_state_with_time_check(address, time)
             .await?
-            .into_inner();
-        let raw_transactions = data
-            .into_iter()
-            .map(|x| decode_raw_transaction(&x))
-            .collect::<Result<_>>()?;
-
-        Ok(raw_transactions)
-    }
-
-    pub async fn get_raw_transaction(&self, tx_hash: UInt256) -> Result<Option<Transaction>> {
-        if !self.is_capable_of_message_tracking {
-            anyhow::bail!("This method is not supported by light nodes")
-        }
-        let request = GetTransactionRequestRef {
-            id: tx_hash.as_slice(),
-        };
-
-        let data: Option<String> = self.request("getTransaction", request).await?.into_inner();
-        let raw_transaction = match data {
-            Some(data) => decode_raw_transaction(&data)?,
+        {
+            Some(a) => a,
             None => return Ok(None),
         };
 
-        Ok(Some(raw_transaction))
+        let result = function
+            .clone()
+            .run_local(&SimpleClock, state.account, input)
+            .map(Some)?;
+        Ok(result)
+    }
+}
+
+#[async_trait::async_trait]
+pub trait Connection: Send + Sync {
+    fn new(endpoint: String, client: reqwest::Client) -> Self;
+
+    fn update_was_dead(&self, is_dead: bool);
+
+    async fn is_alive(&self) -> bool {
+        let check_result = self.is_alive_inner().await;
+        let is_alive = check_result.as_bool();
+        self.update_was_dead(!is_alive);
+
+        match check_result {
+            LiveCheckResult::Live(stats) => self.set_stats(Some(stats)),
+            LiveCheckResult::Dummy => {}
+            LiveCheckResult::Dead => {}
+        }
+
+        is_alive
     }
 
-    pub async fn request<'a, T, D>(&self, method: &'a str, params: T) -> Result<Answer<D>, RunError>
-    where
-        T: Serialize + Clone,
-        for<'de> D: Deserialize<'de>,
-    {
-        let request = JrpcRequest { method, params };
-        const NUM_RETRIES: usize = 10;
+    fn endpoint(&self) -> &str;
 
-        for tries in 0..=NUM_RETRIES {
-            let client = self
-                .state
+    fn get_stats(&self) -> Option<Timings>;
+
+    fn set_stats(&self, stats: Option<Timings>);
+
+    fn get_client(&self) -> &reqwest::Client;
+
+    async fn is_alive_inner(&self) -> LiveCheckResult;
+
+    async fn method_is_supported(&self, method: &str) -> Result<bool>;
+
+    async fn request<T: Serialize + Send + Sync, B: Message>(
+        &self,
+        request: &ConnectionRequest<T, B>,
+    ) -> Result<reqwest::Response, reqwest::Error> {
+        let req = match request {
+            ConnectionRequest::JRPC(request) => {
+                self.get_client().post(self.endpoint()).json(request)
+            }
+            ConnectionRequest::PROTO(request) => self
                 .get_client()
-                .await
-                .ok_or::<RunError>(JrpcClientError::NoEndpointsAvailable.into())?;
+                .post(self.endpoint())
+                .body(request.encode_to_vec()),
+        };
 
-            let response = match client.request(request.clone()).await {
-                Ok(a) => a,
-                Err(e) => {
-                    tracing::error!(method, "Error while sending request to endpoint: {e:?}");
-                    self.state.remove_endpoint(&client.endpoint);
+        let res = req.send().await?;
+        Ok(res)
+    }
+}
 
-                    if tries == NUM_RETRIES {
-                        return Err(e.into());
-                    }
-                    tokio::time::sleep(self.state.options.aggressive_poll_interval).await;
+pub enum ConnectionRequest<T: Serialize + Send + Sync, B: Message> {
+    JRPC(T),
+    PROTO(B),
+}
 
-                    continue;
-                }
+pub struct State<T> {
+    endpoints: Vec<T>,
+    live_endpoints: RwLock<Vec<T>>,
+    options: ClientOptions,
+}
+
+impl<T: Connection + Ord + Clone> State<T> {
+    async fn get_client(&self) -> Option<T> {
+        for _ in 0..10 {
+            let client = {
+                let live_endpoints = self.live_endpoints.read();
+                self.options.choose_strategy.choose(&live_endpoints)
             };
 
-            match response.result {
-                JsonRpcAnswer::Result(result) => {
-                    return Ok(Answer {
-                        result: serde_json::from_value(result)?,
-                        node_stats: client.get_stats(),
-                    })
-                }
-                JsonRpcAnswer::Error(e) => {
-                    if tries == NUM_RETRIES {
-                        return Err(JrpcClientError::ErrorResponse(e.code, e.message).into());
-                    }
-
-                    tokio::time::sleep(self.state.options.aggressive_poll_interval).await;
-                }
+            if client.is_some() {
+                return client;
+            } else {
+                tokio::time::sleep(self.options.aggressive_poll_interval).await;
             }
         }
 
-        unreachable!()
-    }
-}
-
-pub struct Answer<D> {
-    result: D,
-    node_stats: Option<GetTimingsResponse>,
-}
-
-impl<D> Answer<D>
-where
-    for<'de> D: Deserialize<'de>,
-{
-    pub fn into_inner(self) -> D {
-        self.result
+        None
     }
 
-    pub fn has_state_for(&self, time: u32) -> Result<(), RunError> {
-        if let Some(stats) = &self.node_stats {
-            return if stats.has_state_for(time) {
-                Ok(())
-            } else {
-                Err(RunError::NoStateForTimeStamp(time))
-            };
+    async fn update_endpoints(&self) -> usize {
+        let mut futures = futures::stream::FuturesUnordered::new();
+        for endpoint in &self.endpoints {
+            futures.push(async move { endpoint.is_alive().await.then(|| endpoint.clone()) });
         }
-        // If we don't have stats, we assume that the node is healthy
-        Ok(())
-    }
-}
 
-fn decode_raw_transaction(boc: &str) -> Result<Transaction> {
-    let bytes = base64::decode(boc)?;
-    let cell = ton_types::deserialize_tree_of_cells(&mut bytes.as_slice())?;
-    Transaction::construct_from_cell(cell)
+        let mut new_endpoints = Vec::with_capacity(self.endpoints.len());
+        while let Some(endpoint) = futures.next().await {
+            new_endpoints.extend(endpoint);
+        }
+
+        let new_endpoints_ids: HashSet<&str> =
+            HashSet::from_iter(new_endpoints.iter().map(|e| e.endpoint()));
+        let mut old_endpoints = self.live_endpoints.write();
+        let old_endpoints_ids = HashSet::from_iter(old_endpoints.iter().map(|e| e.endpoint()));
+
+        if old_endpoints_ids != new_endpoints_ids {
+            let sorted_endpoints: Vec<_> = new_endpoints_ids.iter().sorted().collect();
+            tracing::warn!(endpoints = ?sorted_endpoints, "Endpoints updated");
+        }
+
+        *old_endpoints = new_endpoints;
+        old_endpoints.len()
+    }
+
+    fn remove_endpoint(&self, endpoint: &str) {
+        self.live_endpoints
+            .write()
+            .retain(|c| c.endpoint() != endpoint);
+
+        tracing::warn!(endpoint, "Removed endpoint");
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JrpcClientOptions {
+pub struct ClientOptions {
     /// How often the probe should update health statuses.
     ///
     /// Default: `1 sec`
@@ -499,13 +418,58 @@ pub struct JrpcClientOptions {
     pub choose_strategy: ChooseStrategy,
 }
 
-impl Default for JrpcClientOptions {
+impl Default for ClientOptions {
     fn default() -> Self {
         Self {
             probe_interval: Duration::from_secs(1),
             request_timeout: Duration::from_secs(3),
             aggressive_poll_interval: Duration::from_secs(1),
             choose_strategy: ChooseStrategy::Random,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Copy)]
+pub enum ChooseStrategy {
+    Random,
+    RoundRobin,
+    /// Choose the endpoint with the lowest latency
+    TimeBased,
+}
+
+impl ChooseStrategy {
+    fn choose<T: Connection + Ord + Clone>(&self, endpoints: &[T]) -> Option<T> {
+        use rand::prelude::SliceRandom;
+
+        match self {
+            ChooseStrategy::Random => endpoints.choose(&mut rand::thread_rng()).cloned(),
+            ChooseStrategy::RoundRobin => {
+                let index = ROUND_ROBIN_COUNTER.fetch_add(1, Ordering::Release);
+
+                endpoints.get(index % endpoints.len()).cloned()
+            }
+            ChooseStrategy::TimeBased => endpoints
+                .iter()
+                .min_by(|&left, &right| left.cmp(right))
+                .cloned(),
+        }
+    }
+}
+
+pub enum LiveCheckResult {
+    /// GetTimings request was successful
+    Live(Timings),
+    /// Keyblock request was successful, but getTimings failed
+    Dummy,
+    Dead,
+}
+
+impl LiveCheckResult {
+    fn as_bool(&self) -> bool {
+        match self {
+            LiveCheckResult::Live(metrics) => metrics.is_reliable(),
+            LiveCheckResult::Dummy => true,
+            LiveCheckResult::Dead => false,
         }
     }
 }
@@ -553,339 +517,37 @@ pub enum SendStatus {
     Expired,
 }
 
-struct RpcState {
-    endpoints: Vec<JrpcConnection>,
-    live_endpoints: RwLock<Vec<JrpcConnection>>,
-    options: JrpcClientOptions,
+pub struct Answer<D> {
+    result: D,
+    node_stats: Option<Timings>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Copy)]
-pub enum ChooseStrategy {
-    Random,
-    RoundRobin,
-    /// Choose the endpoint with the lowest latency
-    TimeBased,
-}
-
-impl ChooseStrategy {
-    fn choose(&self, endpoints: &[JrpcConnection]) -> Option<JrpcConnection> {
-        use rand::prelude::SliceRandom;
-
-        match self {
-            ChooseStrategy::Random => endpoints.choose(&mut rand::thread_rng()).cloned(),
-            ChooseStrategy::RoundRobin => {
-                let index = ROUND_ROBIN_COUNTER.fetch_add(1, Ordering::Release);
-
-                endpoints.get(index % endpoints.len()).cloned()
-            }
-            ChooseStrategy::TimeBased => endpoints
-                .iter()
-                .min_by(|left, right| left.cmp(right))
-                .cloned(),
-        }
+impl<D> Answer<D> {
+    pub fn into_inner(self) -> D {
+        self.result
     }
-}
 
-impl RpcState {
-    async fn get_client(&self) -> Option<JrpcConnection> {
-        for _ in 0..10 {
-            let client = {
-                let live_endpoints = self.live_endpoints.read();
-                self.options.choose_strategy.choose(&live_endpoints)
-            };
-
-            if client.is_some() {
-                return client;
+    pub fn has_state_for(&self, time: u32) -> Result<(), RunError> {
+        if let Some(stats) = &self.node_stats {
+            return if stats.has_state_for(time) {
+                Ok(())
             } else {
-                tokio::time::sleep(self.options.aggressive_poll_interval).await;
-            }
+                Err(RunError::NoStateForTimeStamp(time))
+            };
         }
-
-        None
-    }
-
-    async fn update_endpoints(&self) -> usize {
-        let mut futures = futures::stream::FuturesUnordered::new();
-        for endpoint in &self.endpoints {
-            futures.push(async move { endpoint.is_alive().await.then(|| endpoint.clone()) });
-        }
-
-        let mut new_endpoints = Vec::with_capacity(self.endpoints.len());
-        while let Some(endpoint) = futures.next().await {
-            new_endpoints.extend(endpoint);
-        }
-
-        let new_endpoints_ids: HashSet<&str> =
-            HashSet::from_iter(new_endpoints.iter().map(|e| e.endpoint.as_str()));
-        let mut old_endpoints = self.live_endpoints.write();
-        let old_endpoints_ids =
-            HashSet::from_iter(old_endpoints.iter().map(|e| e.endpoint.as_str()));
-
-        if old_endpoints_ids != new_endpoints_ids {
-            let sorted_endpoints: Vec<_> = new_endpoints_ids.iter().sorted().collect();
-            tracing::warn!(endpoints = ?sorted_endpoints, "Endpoints updated");
-        }
-
-        *old_endpoints = new_endpoints;
-        old_endpoints.len()
-    }
-
-    fn remove_endpoint(&self, endpoint: &str) {
-        self.live_endpoints
-            .write()
-            .retain(|c| c.endpoint.as_ref() != endpoint);
-
-        tracing::warn!(endpoint, "Removed endpoint");
-    }
-}
-
-#[derive(Clone, Debug)]
-struct JrpcConnection {
-    endpoint: Arc<String>,
-    client: reqwest::Client,
-    was_dead: Arc<AtomicBool>,
-    stats: Arc<Mutex<Option<GetTimingsResponse>>>,
-}
-
-impl PartialEq<Self> for JrpcConnection {
-    fn eq(&self, other: &Self) -> bool {
-        self.endpoint == other.endpoint
-    }
-}
-
-impl Eq for JrpcConnection {}
-
-impl PartialOrd<Self> for JrpcConnection {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl cmp::Ord for JrpcConnection {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        if self.eq(other) {
-            cmp::Ordering::Equal
-        } else {
-            let left_stats = self.get_stats();
-            let right_stats = other.get_stats();
-
-            match (left_stats, right_stats) {
-                (Some(left_stats), Some(right_stats)) => left_stats.cmp(&right_stats),
-                (None, Some(_)) => cmp::Ordering::Less,
-                (Some(_), None) => cmp::Ordering::Greater,
-                (None, None) => cmp::Ordering::Equal,
-            }
-        }
-    }
-}
-
-impl std::fmt::Display for JrpcConnection {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.endpoint)
-    }
-}
-
-impl JrpcConnection {
-    fn new(endpoint: String, client: reqwest::Client) -> Self {
-        JrpcConnection {
-            endpoint: Arc::new(endpoint),
-            client,
-            was_dead: Arc::new(AtomicBool::new(false)),
-            stats: Arc::new(Default::default()),
-        }
-    }
-
-    async fn request<T: Serialize>(&self, request: JrpcRequest<'_, T>) -> Result<JsonRpcResponse> {
-        let req = self.client.post(self.endpoint.as_str()).json(&request);
-        let res = req.send().await?.json::<JsonRpcResponse>().await?;
-        Ok(res)
-    }
-
-    fn update_was_dead(&self, is_dead: bool) {
-        self.was_dead.store(is_dead, Ordering::Release);
-    }
-
-    async fn is_alive(&self) -> bool {
-        let check_result = self.is_alive_inner().await;
-        let is_alive = check_result.as_bool();
-        self.update_was_dead(!is_alive);
-
-        match check_result {
-            LiveCheckResult::Live(stats) => self.set_stats(Some(stats)),
-            LiveCheckResult::Dummy => {}
-            LiveCheckResult::Dead => {}
-        }
-
-        is_alive
-    }
-
-    async fn is_alive_inner(&self) -> LiveCheckResult {
-        let result = match self
-            .request(JrpcRequest {
-                method: "getTimings",
-                params: (),
-            })
-            .await
-        {
-            Ok(a) => a,
-            Err(e) => {
-                // general error, link is dead, so no need to check other branch
-                if !self.was_dead.load(Ordering::Acquire) {
-                    tracing::error!(endpoint = ?self.endpoint, "Dead endpoint: {e:?}");
-                    self.was_dead.store(true, Ordering::Release);
-                }
-                return LiveCheckResult::Dead;
-            }
-        };
-
-        match result.result {
-            JsonRpcAnswer::Result(v) => {
-                let timings: Result<GetTimingsResponse, _> = serde_json::from_value(v);
-                if let Ok(t) = timings {
-                    let is_reliable = t.is_reliable();
-                    if !is_reliable {
-                        let GetTimingsResponse {
-                            last_mc_block_seqno,
-                            last_shard_client_mc_block_seqno,
-                            mc_time_diff,
-                            shard_client_time_diff,
-                            ..
-                        } = t;
-                        tracing::warn!(last_mc_block_seqno,last_shard_client_mc_block_seqno,mc_time_diff,shard_client_time_diff, endpoint = ?self.endpoint, "Endpoint is not reliable" );
-                    }
-
-                    return LiveCheckResult::Live(t);
-                }
-            }
-            JsonRpcAnswer::Error(e) => {
-                if e.code != -32601 {
-                    tracing::error!(endpoint = ?self.endpoint, "Dead endpoint");
-                    return LiveCheckResult::Dead;
-                }
-            }
-        }
-
-        // falback to keyblock request
-        match self
-            .request(JrpcRequest {
-                method: "getLatestKeyBlock",
-                params: (),
-            })
-            .await
-        {
-            Ok(res) => {
-                if let JsonRpcAnswer::Result(_) = res.result {
-                    LiveCheckResult::Dummy
-                } else {
-                    LiveCheckResult::Dead
-                }
-            }
-            Err(e) => {
-                tracing::error!(endpoint = self.endpoint.as_str(), "Dead endpoint: {e:?}");
-                LiveCheckResult::Dead
-            }
-        }
-    }
-
-    async fn method_is_supported(&self, method: &str) -> Result<bool> {
-        let req = self
-            .client
-            .post(self.endpoint.as_str())
-            .json(&JrpcRequest { method, params: () });
-
-        let JsonRpcResponse { result } = req.send().await?.json().await?;
-        let res = match result {
-            JsonRpcAnswer::Result(_) => true,
-            JsonRpcAnswer::Error(e) => {
-                if e.code == -32601 {
-                    false
-                } else if e.code == -32602 {
-                    true // method is supported, but params are invalid
-                } else {
-                    anyhow::bail!("Unexpected error: {}. Code: {}", e.message, e.code);
-                }
-            }
-        };
-
-        Ok(res)
-    }
-
-    fn get_stats(&self) -> Option<GetTimingsResponse> {
-        self.stats.lock().clone()
-    }
-
-    fn set_stats(&self, stats: Option<GetTimingsResponse>) {
-        *self.stats.lock() = stats;
-    }
-}
-
-enum LiveCheckResult {
-    /// GetTimings request was successful
-    Live(GetTimingsResponse),
-    /// Keyblock request was successful, but getTimings failed
-    Dummy,
-    Dead,
-}
-
-impl LiveCheckResult {
-    fn as_bool(&self) -> bool {
-        match self {
-            LiveCheckResult::Live(metrics) => metrics.is_reliable(),
-            LiveCheckResult::Dummy => true,
-            LiveCheckResult::Dead => false,
-        }
+        // If we don't have stats, we assume that the node is healthy
+        Ok(())
     }
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum JrpcClientError {
+pub enum ClientError {
     #[error("No endpoints available")]
     NoEndpointsAvailable,
     #[error("Error response ({0}): {1}")]
     ErrorResponse(i32, String),
-}
-
-#[derive(Debug, Clone)]
-struct JrpcRequest<'a, T> {
-    method: &'a str,
-    params: T,
-}
-
-impl<T: Serialize> Serialize for JrpcRequest<'_, T> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::ser::Serializer,
-    {
-        use serde::ser::SerializeStruct;
-
-        let mut s = serializer.serialize_struct("JrpcRequest", 4)?;
-        s.serialize_field("jsonrpc", "2.0")?;
-        s.serialize_field("id", &0)?;
-        s.serialize_field("method", self.method)?;
-        s.serialize_field("params", &self.params)?;
-        s.end()
-    }
-}
-
-#[derive(Serialize, Debug, Deserialize, PartialEq, Eq)]
-/// A JSON-RPC response.
-pub struct JsonRpcResponse {
-    #[serde(flatten)]
-    pub result: JsonRpcAnswer,
-}
-
-#[derive(Serialize, Debug, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-/// JsonRpc [response object](https://www.jsonrpc.org/specification#response_object)
-pub enum JsonRpcAnswer {
-    Result(serde_json::Value),
-    Error(JsonRpcError),
-}
-
-#[derive(Serialize, Debug, Deserialize, PartialEq, Eq)]
-pub struct JsonRpcError {
-    pub code: i32,
-    pub message: String,
+    #[error("Failed to parse response")]
+    InvalidResponse,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -897,177 +559,9 @@ pub enum RunError {
     #[error("Network error: {0}")]
     NetworkError(#[from] reqwest::Error),
     #[error("Jrpc error: {0}")]
-    JrpcClientError(#[from] JrpcClientError),
+    JrpcClientError(#[from] ClientError),
     #[error("JSON error: {0}")]
     ParseError(#[from] serde_json::Error),
     #[error("Invalid message type: {0}")]
     NotInboundMessage(String),
-}
-
-#[cfg(test)]
-mod test {
-    use std::str::FromStr;
-    use std::time::Duration;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn test() {
-        tracing_subscriber::fmt::init();
-
-        let rpc = [
-            "http://127.0.0.1:8081",
-            "http://34.78.198.249:8081/rpc",
-            "https://jrpc.everwallet.net/rpc",
-        ]
-        .iter()
-        .map(|x| x.parse().unwrap())
-        .collect::<Vec<_>>();
-
-        let balanced_client = JrpcClient::new(
-            rpc,
-            JrpcClientOptions {
-                probe_interval: Duration::from_secs(10),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-
-        for _ in 0..10 {
-            let response = balanced_client.get_latest_key_block().await.unwrap();
-            tracing::info!("response is ok: {response:?}");
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
-    }
-
-    #[tokio::test]
-    async fn test_get() {
-        let pr = get_client().await;
-
-        pr.get_contract_state(
-            &MsgAddressInt::from_str(
-                "0:8e2586602513e99a55fa2be08561469c7ce51a7d5a25977558e77ef2bc9387b4",
-            )
-            .unwrap(),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-
-        pr.get_contract_state(
-            &MsgAddressInt::from_str(
-                "-1:efd5a14409a8a129686114fc092525fddd508f1ea56d1b649a3a695d3a5b188c",
-            )
-            .unwrap(),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-
-        assert!(pr
-            .get_contract_state(
-                &MsgAddressInt::from_str(
-                    "-1:aaa5a14409a8a129686114fc092525fddd508f1ea56d1b649a3a695d3a5b188c",
-                )
-                .unwrap(),
-            )
-            .await
-            .unwrap()
-            .is_none());
-    }
-
-    #[tokio::test]
-    async fn test_key_block() {
-        let pr = get_client().await;
-
-        pr.get_latest_key_block().await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_all_dead() {
-        let pr = JrpcClient::new(
-            [
-                "https://lolkek228.dead/rpc".parse().unwrap(),
-                "http://127.0.0.1:8081".parse().unwrap(),
-                "http://127.0.0.1:12333".parse().unwrap(),
-            ],
-            JrpcClientOptions {
-                probe_interval: Duration::from_secs(10),
-                ..Default::default()
-            },
-        )
-        .await
-        .is_err();
-
-        assert!(pr);
-    }
-
-    #[tokio::test]
-    async fn test_transations() {
-        let pr = get_client().await;
-
-        pr.get_transactions(
-            100,
-            &MsgAddressInt::from_str(
-                "-1:3333333333333333333333333333333333333333333333333333333333333333",
-            )
-            .unwrap(),
-            None,
-        )
-        .await
-        .unwrap();
-    }
-
-    #[tokio::test]
-    async fn get_dst_transaction() {
-        let pr = get_client().await;
-        let tx = pr
-            .get_dst_transaction(
-                &hex::decode("40172727c17aa9ad0dd11c10e822226a7d22cc1e41f8c5d35b7f5614d8a12533")
-                    .unwrap(),
-            )
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(tx.lt, 33247841000007);
-    }
-
-    async fn get_client() -> JrpcClient {
-        let pr = JrpcClient::new(
-            [
-                "https://jrpc.everwallet.net/rpc".parse().unwrap(),
-                "http://127.0.0.1:8081".parse().unwrap(),
-            ],
-            JrpcClientOptions {
-                probe_interval: Duration::from_secs(10),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-        pr
-    }
-
-    #[test]
-    fn test_serde() {
-        let err = r#"
-        {
-	        "jsonrpc": "2.0",
-	        "error": {
-	        	"code": -32601,
-	        	"message": "Method `getContractState1` not found",
-	        	"data": null
-	        },
-	        "id": 1
-        }"#;
-
-        let resp: JsonRpcResponse = serde_json::from_str(err).unwrap();
-        match resp.result {
-            JsonRpcAnswer::Error(e) => {
-                assert_eq!(e.code, -32601);
-            }
-            _ => panic!("expected error"),
-        }
-    }
 }
