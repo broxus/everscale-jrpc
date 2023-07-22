@@ -15,6 +15,7 @@ use itertools::Itertools;
 use nekoton::transport::models::ExistingContract;
 use nekoton_utils::SimpleClock;
 use parking_lot::RwLock;
+use reqwest::header::CONTENT_TYPE;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use ton_block::{GetRepresentationHash, MsgAddressInt, Transaction};
@@ -322,12 +323,15 @@ pub trait Connection: Send + Sync {
         request: &ConnectionRequest<T, B>,
     ) -> Result<reqwest::Response, reqwest::Error> {
         let req = match request {
-            ConnectionRequest::JRPC(request) => {
-                self.get_client().post(self.endpoint()).json(request)
-            }
+            ConnectionRequest::JRPC(request) => self
+                .get_client()
+                .post(self.endpoint())
+                .header(CONTENT_TYPE, "application/json")
+                .json(request),
             ConnectionRequest::PROTO(request) => self
                 .get_client()
                 .post(self.endpoint())
+                .header(CONTENT_TYPE, "application/x-protobuf")
                 .body(request.encode_to_vec()),
         };
 

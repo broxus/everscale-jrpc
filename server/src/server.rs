@@ -3,8 +3,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use axum::extract::DefaultBodyLimit;
+use axum::body::Body;
+use axum::extract::{DefaultBodyLimit, State};
+use axum::http::header::CONTENT_TYPE;
+use axum::http::{Request, StatusCode};
+use axum::response::IntoResponse;
 use axum::routing::{get, post};
+use axum::RequestExt;
 
 use crate::jrpc;
 use crate::proto;
@@ -68,6 +73,7 @@ impl Server {
         // Prepare routes
         let router = axum::Router::new()
             .route("/", get(health_check))
+            .route("/", post(common_route))
             .route("/rpc", post(jrpc::jrpc_router))
             .route("/proto", post(proto::proto_router))
             .layer(service)
@@ -84,6 +90,30 @@ impl Server {
 }
 
 const MAX_REQUEST_SIZE: usize = 2 << 17; //256kb
+
+async fn common_route(
+    State(ctx): State<Arc<Server>>,
+    req: Request<Body>,
+) -> axum::response::Response {
+    let content_type = req
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok());
+
+    if let Some(content_type) = content_type {
+        if content_type.starts_with("application/json") {
+            let req = req.extract().await.unwrap();
+            return jrpc::jrpc_router(State(ctx), req).await;
+        }
+
+        if content_type.starts_with("application/x-protobuf") {
+            let req = req.extract().await.unwrap();
+            return proto::proto_router(State(ctx), req).await;
+        }
+    }
+
+    StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response()
+}
 
 async fn health_check() -> impl axum::response::IntoResponse {
     std::time::SystemTime::now()
