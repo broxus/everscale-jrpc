@@ -102,13 +102,19 @@ async fn common_route(
 
     if let Some(content_type) = content_type {
         if content_type.starts_with("application/json") {
-            let req = req.extract().await.unwrap();
-            return jrpc::jrpc_router(State(ctx), req).await;
+            let res = match req.extract().await {
+                Ok(req) => jrpc::jrpc_router(State(ctx), req).await,
+                Err(_) => StatusCode::BAD_REQUEST.into_response(),
+            };
+            return res;
         }
 
         if content_type.starts_with("application/x-protobuf") {
-            let req = req.extract().await.unwrap();
-            return proto::proto_router(State(ctx), req).await;
+            let res = match req.extract().await {
+                Ok(req) => proto::proto_router(State(ctx), req).await,
+                Err(_) => StatusCode::BAD_REQUEST.into_response(),
+            };
+            return res;
         }
     }
 
