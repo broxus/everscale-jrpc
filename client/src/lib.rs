@@ -22,10 +22,170 @@ use ton_block::{GetRepresentationHash, MsgAddressInt, Transaction};
 
 use everscale_rpc_models::Timings;
 
+use crate::jrpc::JrpcClient;
+use crate::proto::ProtoClient;
+
 pub mod jrpc;
 pub mod proto;
 
 static ROUND_ROBIN_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+pub enum RpcClient {
+    Jrpc(JrpcClient),
+    Proto(ProtoClient),
+}
+
+impl RpcClient {
+    pub async fn new<I: IntoIterator<Item = Url> + Send>(
+        endpoints: I,
+        options: ClientOptions,
+        client_type: ClientType,
+    ) -> Result<Self> {
+        let client = match client_type {
+            ClientType::Jrpc => RpcClient::Jrpc(JrpcClient::new(endpoints, options).await?),
+            ClientType::Proto => RpcClient::Proto(ProtoClient::new(endpoints, options).await?),
+        };
+
+        Ok(client)
+    }
+
+    pub fn is_capable_of_message_tracking(&self) -> bool {
+        match self {
+            RpcClient::Jrpc(client) => client.is_capable_of_message_tracking(),
+            RpcClient::Proto(client) => client.is_capable_of_message_tracking(),
+        }
+    }
+
+    pub async fn get_blockchain_config(&self) -> Result<ton_executor::BlockchainConfig> {
+        match self {
+            RpcClient::Jrpc(client) => client.get_blockchain_config().await,
+            RpcClient::Proto(client) => client.get_blockchain_config().await,
+        }
+    }
+
+    pub async fn broadcast_message(&self, message: ton_block::Message) -> Result<(), RunError> {
+        match self {
+            RpcClient::Jrpc(client) => client.broadcast_message(message).await,
+            RpcClient::Proto(client) => client.broadcast_message(message).await,
+        }
+    }
+
+    pub async fn get_raw_transaction(
+        &self,
+        tx_hash: ton_types::UInt256,
+    ) -> Result<Option<Transaction>> {
+        match self {
+            RpcClient::Jrpc(client) => client.get_raw_transaction(tx_hash).await,
+            RpcClient::Proto(client) => client.get_raw_transaction(tx_hash).await,
+        }
+    }
+
+    pub async fn get_dst_transaction(&self, message_hash: &[u8]) -> Result<Option<Transaction>> {
+        match self {
+            RpcClient::Jrpc(client) => client.get_dst_transaction(message_hash).await,
+            RpcClient::Proto(client) => client.get_dst_transaction(message_hash).await,
+        }
+    }
+
+    pub async fn get_contract_state(
+        &self,
+        address: &MsgAddressInt,
+    ) -> Result<Option<ExistingContract>> {
+        match self {
+            RpcClient::Jrpc(client) => client.get_contract_state(address).await,
+            RpcClient::Proto(client) => client.get_contract_state(address).await,
+        }
+    }
+
+    pub async fn get_contract_state_with_time_check(
+        &self,
+        address: &MsgAddressInt,
+        time: u32,
+    ) -> Result<Option<ExistingContract>, RunError> {
+        match self {
+            RpcClient::Jrpc(client) => {
+                client
+                    .get_contract_state_with_time_check(address, time)
+                    .await
+            }
+            RpcClient::Proto(client) => {
+                client
+                    .get_contract_state_with_time_check(address, time)
+                    .await
+            }
+        }
+    }
+
+    pub async fn run_local(
+        &self,
+        address: &MsgAddressInt,
+        function: &ton_abi::Function,
+        input: &[ton_abi::Token],
+    ) -> Result<Option<nekoton::abi::ExecutionOutput>> {
+        match self {
+            RpcClient::Jrpc(client) => client.run_local(address, function, input).await,
+            RpcClient::Proto(client) => client.run_local(address, function, input).await,
+        }
+    }
+
+    pub async fn apply_message(
+        &self,
+        message: &ton_block::Message,
+    ) -> Result<ton_block::Transaction> {
+        match self {
+            RpcClient::Jrpc(client) => client.apply_message(message).await,
+            RpcClient::Proto(client) => client.apply_message(message).await,
+        }
+    }
+
+    pub async fn send_message_unrelaible(
+        &self,
+        message: ton_block::Message,
+        options: SendOptions,
+    ) -> Result<SendStatus> {
+        match self {
+            RpcClient::Jrpc(client) => client.send_message_unrelaible(message, options).await,
+            RpcClient::Proto(client) => client.send_message_unrelaible(message, options).await,
+        }
+    }
+
+    pub async fn send_message(
+        &self,
+        message: ton_block::Message,
+        options: SendOptions,
+    ) -> Result<SendStatus> {
+        match self {
+            RpcClient::Jrpc(client) => client.send_message(message, options).await,
+            RpcClient::Proto(client) => client.send_message(message, options).await,
+        }
+    }
+
+    pub async fn run_local_with_time_check(
+        &self,
+        address: &MsgAddressInt,
+        function: &ton_abi::Function,
+        input: &[ton_abi::Token],
+        time: u32,
+    ) -> Result<Option<nekoton::abi::ExecutionOutput>, RunError> {
+        match self {
+            RpcClient::Jrpc(client) => {
+                client
+                    .run_local_with_time_check(address, function, input, time)
+                    .await
+            }
+            RpcClient::Proto(client) => {
+                client
+                    .run_local_with_time_check(address, function, input, time)
+                    .await
+            }
+        }
+    }
+}
+
+pub enum ClientType {
+    Jrpc,
+    Proto,
+}
 
 #[async_trait::async_trait]
 pub trait Client<T>: Send + Sync + Sized

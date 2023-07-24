@@ -1,5 +1,4 @@
 use anyhow::Result;
-use everscale_rpc_client::{Client, ClientOptions};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -7,11 +6,13 @@ async fn main() -> Result<()> {
         .with_max_level(tracing::Level::DEBUG)
         .init();
 
-    let client = everscale_rpc_client::jrpc::JrpcClient::new(
+    let client = everscale_rpc_client::RpcClient::new(
         ["https://jrpc.everwallet.net/rpc".parse().unwrap()],
-        ClientOptions::default(),
+        everscale_rpc_client::ClientOptions::default(),
+        everscale_rpc_client::ClientType::Jrpc,
     )
-    .await?;
+    .await
+    .unwrap();
 
     let tx_hash = std::env::args().nth(1).expect("No arguments passed");
     let tx_hash = hex::decode(tx_hash).unwrap();
