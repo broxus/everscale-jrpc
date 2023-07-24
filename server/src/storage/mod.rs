@@ -399,7 +399,7 @@ impl PersistentStorage {
 
         if non_empty_batch {
             db.write_opt(write_batch, self.code_hashes.write_config())
-                .context("Failed to update JRPC storage")?;
+                .context("Failed to update server storage")?;
         }
         tracing::info!(
             %shard,
@@ -538,7 +538,7 @@ impl PersistentStorage {
             self.inner
                 .raw()
                 .write_opt(write_batch, self.transactions.write_config())
-                .context("Failed to update JRPC storage")?;
+                .context("Failed to update server storage")?;
         }
 
         Ok(())

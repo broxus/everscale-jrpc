@@ -20,14 +20,14 @@ impl ton_indexer::Subscriber for EngineSubscriber {
     async fn process_block(&self, ctx: ProcessBlockContext<'_>) -> Result<()> {
         self.server_state
             .process_block(ctx.block_stuff(), ctx.shard_state_stuff())
-            .context("Failed to update JRPC state")
+            .context("Failed to update server state")
     }
 
     async fn process_full_state(&self, state: Arc<ShardStateStuff>) -> Result<()> {
         self.server_state
             .process_full_state(state)
             .await
-            .context("Failed to update JRPC state")
+            .context("Failed to update server state")
     }
 
     async fn process_blocks_edge(
