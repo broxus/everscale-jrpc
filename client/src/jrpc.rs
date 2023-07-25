@@ -448,6 +448,12 @@ pub struct JrpcRequest<'a, T> {
     params: T,
 }
 
+impl<'a, T: Serialize> JrpcRequest<'a, T> {
+    pub fn new(method: &'a str, params: T) -> Self {
+        Self { method, params }
+    }
+}
+
 impl<T: Serialize> Serialize for JrpcRequest<'_, T> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

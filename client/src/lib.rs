@@ -537,12 +537,15 @@ pub trait Connection: Send + Sync {
     }
 }
 
-pub enum RpcRequest<'a, T>
-where
-    T: Serialize + Send + Sync,
-{
+pub enum RpcRequest<'a, T> {
     JRPC(JrpcRequest<'a, T>),
     PROTO(rpc::Request),
+}
+
+impl<'a, S: Serialize + Send + Sync> RpcRequest<'a, S> {
+    pub fn create_jrpc_request(method: &'a str, params: S) -> Self {
+        Self::JRPC(JrpcRequest::new(method, params))
+    }
 }
 
 pub enum RpcResponse<D>
