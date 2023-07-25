@@ -176,7 +176,7 @@ impl<T: Connection + Ord + Clone + 'static> JrpcClientImpl<T> {
         Ok(Some(raw_transaction))
     }
 
-    pub async fn request<'a, L, D>(&self, method: &'a str, params: L) -> Result<Answer<D>, RunError>
+    async fn request<'a, L, D>(&self, method: &'a str, params: L) -> Result<Answer<D>, RunError>
     where
         L: Serialize + Send + Sync + Clone,
         for<'de> D: Deserialize<'de>,

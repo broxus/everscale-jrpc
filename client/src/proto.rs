@@ -304,7 +304,7 @@ impl<T: Connection + Ord + Clone + 'static> ProtoClientImpl<T> {
         }
     }
 
-    pub async fn request(&self, request: rpc::Request) -> Result<Answer<rpc::Response>, RunError> {
+    async fn request(&self, request: rpc::Request) -> Result<Answer<rpc::Response>, RunError> {
         let request: ConnectionRequest<String, _> = ConnectionRequest::PROTO(request);
 
         const NUM_RETRIES: usize = 10;
