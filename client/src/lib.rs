@@ -30,6 +30,7 @@ pub mod proto;
 
 static ROUND_ROBIN_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
+#[derive(Clone)]
 pub enum RpcClient {
     Jrpc(JrpcClient),
     Proto(ProtoClient),
