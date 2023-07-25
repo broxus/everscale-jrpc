@@ -225,7 +225,13 @@ impl<T: Connection + Ord + Clone + 'static> JrpcClientImpl<T> {
             let response = match res {
                 Ok(a) => a,
                 Err(e) => {
-                    // TODO: tracing::error!(method, "Error while sending request to endpoint: {e:?}");
+                    if let RpcRequest::JRPC(req) = request {
+                        tracing::error!(
+                            req.method,
+                            "Error while sending JRPC request to endpoint: {e:?}"
+                        );
+                    }
+
                     self.state.remove_endpoint(client.endpoint());
 
                     if tries == NUM_RETRIES {

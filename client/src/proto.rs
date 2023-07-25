@@ -327,7 +327,13 @@ impl<T: Connection + Ord + Clone + 'static> ProtoClientImpl<T> {
             let response = match response {
                 Ok(a) => a,
                 Err(e) => {
-                    // TODO: tracing::error!(request, "Error while sending request to endpoint: {e:?}");
+                    if let RpcRequest::PROTO(req) = request {
+                        tracing::error!(
+                            error = ?req.call,
+                            "Error while sending PROTO request to endpoint: {e:?}"
+                        );
+                    }
+
                     self.state.remove_endpoint(client.endpoint());
 
                     if tries == NUM_RETRIES {
