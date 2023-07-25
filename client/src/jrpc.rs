@@ -65,14 +65,23 @@ where
             }
             CommonMsgInfo::ExtInMsgInfo(_) => {}
         }
-        let req = jrpc::SendMessageRequest { message };
-        self.request("sendMessage", req).await.map(|x| x.result)
+
+        let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
+            method: "sendMessage",
+            params: jrpc::SendMessageRequest { message },
+        });
+
+        self.request(&request).await.map(|x| x.result)
     }
 
     async fn get_dst_transaction(&self, message_hash: &[u8]) -> Result<Option<Transaction>> {
         let message_hash = message_hash.try_into().context("Invalid message hash")?;
-        let req = jrpc::GetDstTransactionRequest { message_hash };
-        let result: Vec<u8> = match self.request("getDstTransaction", req).await?.into_inner() {
+        let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
+            method: "getDstTransaction",
+            params: jrpc::GetDstTransactionRequest { message_hash },
+        });
+
+        let result: Vec<u8> = match self.request(&request).await?.into_inner() {
             Some(s) => base64::decode::<String>(s)?,
             None => return Ok(None),
         };
@@ -85,8 +94,12 @@ where
         &self,
         address: &MsgAddressInt,
     ) -> Result<Option<ExistingContract>> {
-        let req = jrpc::GetContractStateRequestRef { address };
-        match self.request("getContractState", req).await?.into_inner() {
+        let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
+            method: "getContractState",
+            params: jrpc::GetContractStateRequestRef { address },
+        });
+
+        match self.request(&request).await?.into_inner() {
             jrpc::GetContractStateResponse::NotExists => Ok(None),
             jrpc::GetContractStateResponse::Exists {
                 account,
@@ -108,8 +121,12 @@ where
         address: &MsgAddressInt,
         time: u32,
     ) -> Result<Option<ExistingContract>, RunError> {
-        let req = jrpc::GetContractStateRequestRef { address };
-        let response = self.request("getContractState", req).await?;
+        let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
+            method: "getContractState",
+            params: jrpc::GetContractStateRequestRef { address },
+        });
+
+        let response = self.request(&request).await?;
         match response.result {
             jrpc::GetContractStateResponse::NotExists => {
                 response.has_state_for(time)?;
@@ -130,9 +147,12 @@ where
 
 impl<T: Connection + Ord + Clone + 'static> JrpcClientImpl<T> {
     pub async fn get_latest_key_block(&self) -> Result<jrpc::GetLatestKeyBlockResponse, RunError> {
-        self.request("getLatestKeyBlock", ())
-            .await
-            .map(|x| x.result)
+        let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
+            method: "getLatestKeyBlock",
+            params: (),
+        });
+
+        self.request(&request).await.map(|x| x.result)
     }
 
     pub async fn get_transactions(
@@ -141,16 +161,16 @@ impl<T: Connection + Ord + Clone + 'static> JrpcClientImpl<T> {
         account: &MsgAddressInt,
         last_transaction_lt: Option<u64>,
     ) -> Result<Vec<Transaction>> {
-        let request = jrpc::GetTransactionsListRequestRef {
-            account,
-            limit,
-            last_transaction_lt,
-        };
+        let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
+            method: "getTransactionsList",
+            params: jrpc::GetTransactionsListRequestRef {
+                account,
+                limit,
+                last_transaction_lt,
+            },
+        });
 
-        let data: Vec<String> = self
-            .request("getTransactionsList", request)
-            .await?
-            .into_inner();
+        let data: Vec<String> = self.request(&request).await?.into_inner();
         let raw_transactions = data
             .into_iter()
             .map(|x| decode_raw_transaction(&x))
@@ -163,11 +183,15 @@ impl<T: Connection + Ord + Clone + 'static> JrpcClientImpl<T> {
         if !self.is_capable_of_message_tracking {
             anyhow::bail!("This method is not supported by light nodes")
         }
-        let request = jrpc::GetTransactionRequestRef {
-            id: tx_hash.as_slice(),
-        };
 
-        let data: Option<String> = self.request("getTransaction", request).await?.into_inner();
+        let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
+            method: "getTransaction",
+            params: jrpc::GetTransactionRequestRef {
+                id: tx_hash.as_slice(),
+            },
+        });
+
+        let data: Option<String> = self.request(&request).await?.into_inner();
         let raw_transaction = match data {
             Some(data) => decode_raw_transaction(&data)?,
             None => return Ok(None),
@@ -176,13 +200,14 @@ impl<T: Connection + Ord + Clone + 'static> JrpcClientImpl<T> {
         Ok(Some(raw_transaction))
     }
 
-    async fn request<'a, L, D>(&self, method: &'a str, params: L) -> Result<Answer<D>, RunError>
+    pub async fn request<'a, S, D>(
+        &self,
+        request: &RpcRequest<'a, S>,
+    ) -> Result<Answer<D>, RunError>
     where
-        L: Serialize + Send + Sync + Clone,
+        S: Serialize + Send + Sync + Clone,
         for<'de> D: Deserialize<'de>,
     {
-        let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest { method, params });
-
         const NUM_RETRIES: usize = 10;
 
         for tries in 0..=NUM_RETRIES {
@@ -192,7 +217,7 @@ impl<T: Connection + Ord + Clone + 'static> JrpcClientImpl<T> {
                 .await
                 .ok_or::<RunError>(ClientError::NoEndpointsAvailable.into())?;
 
-            let res = match client.request(&request).await {
+            let res = match client.request(request).await {
                 Ok(res) => res.json::<JsonRpcResponse>().await,
                 Err(e) => Err(e),
             };
@@ -200,7 +225,7 @@ impl<T: Connection + Ord + Clone + 'static> JrpcClientImpl<T> {
             let response = match res {
                 Ok(a) => a,
                 Err(e) => {
-                    tracing::error!(method, "Error while sending request to endpoint: {e:?}");
+                    // TODO: tracing::error!(method, "Error while sending request to endpoint: {e:?}");
                     self.state.remove_endpoint(client.endpoint());
 
                     if tries == NUM_RETRIES {

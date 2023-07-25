@@ -72,14 +72,14 @@ where
             CommonMsgInfo::ExtInMsgInfo(_) => {}
         }
 
-        let request = rpc::Request {
+        let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
             call: Some(rpc::request::Call::SendMessage(rpc::request::SendMessage {
                 message: bytes::Bytes::from(message.write_to_bytes()?),
             })),
-        };
+        });
 
         let result = self
-            .request(request)
+            .request(&request)
             .await
             .map(|x| x.result.result)?
             .ok_or::<RunError>(ClientError::InvalidResponse.into())?;
@@ -92,13 +92,13 @@ where
 
     async fn get_dst_transaction(&self, message_hash: &[u8]) -> Result<Option<Transaction>> {
         let message_hash = bytes::Bytes::copy_from_slice(message_hash);
-        let request = rpc::Request {
+        let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
             call: Some(rpc::request::Call::GetDstTransaction(
                 rpc::request::GetDstTransaction { message_hash },
             )),
-        };
+        });
 
-        let response = self.request(request).await?.into_inner();
+        let response = self.request(&request).await?.into_inner();
         match response.result {
             Some(rpc::response::Result::GetRawTransaction(tx)) => match tx.transaction {
                 Some(bytes) => Ok(Some(Transaction::construct_from_bytes(bytes.as_ref())?)),
@@ -114,14 +114,14 @@ where
     ) -> Result<Option<ExistingContract>> {
         let address = address_to_bytes(address);
 
-        let request = rpc::Request {
+        let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
             call: Some(rpc::request::Call::GetContractState(
                 rpc::request::GetContractState { address },
             )),
-        };
+        });
 
         let result = self
-            .request(request)
+            .request(&request)
             .await?
             .into_inner()
             .result
@@ -180,13 +180,13 @@ where
     ) -> Result<Option<ExistingContract>, RunError> {
         let address = address_to_bytes(address);
 
-        let request = rpc::Request {
+        let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
             call: Some(rpc::request::Call::GetContractState(
                 rpc::request::GetContractState { address },
             )),
-        };
+        });
 
-        let response = self.request(request).await?;
+        let response = self.request(&request).await?;
         let has_state_for = response.has_state_for(time);
 
         match response.result.result {
@@ -238,11 +238,11 @@ where
 
 impl<T: Connection + Ord + Clone + 'static> ProtoClientImpl<T> {
     pub async fn get_latest_key_block(&self) -> Result<ton_block::Block, RunError> {
-        let request = rpc::Request {
+        let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
             call: Some(rpc::request::Call::GetLatestKeyBlock(())),
-        };
+        });
 
-        let response = self.request(request).await?.into_inner();
+        let response = self.request(&request).await?.into_inner();
         match response.result {
             Some(rpc::response::Result::GetLatestKeyBlock(key_block)) => Ok(
                 ton_block::Block::construct_from_bytes(key_block.block.as_ref())?,
@@ -259,7 +259,7 @@ impl<T: Connection + Ord + Clone + 'static> ProtoClientImpl<T> {
     ) -> Result<Vec<Transaction>> {
         let account = address_to_bytes(account);
 
-        let request = rpc::Request {
+        let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
             call: Some(rpc::request::Call::GetTransactionsList(
                 rpc::request::GetTransactionsList {
                     account,
@@ -267,9 +267,9 @@ impl<T: Connection + Ord + Clone + 'static> ProtoClientImpl<T> {
                     limit: limit as u32,
                 },
             )),
-        };
+        });
 
-        let response = self.request(request).await?.into_inner();
+        let response = self.request(&request).await?.into_inner();
         match response.result {
             Some(rpc::response::Result::GetTransactionsList(txs)) => txs
                 .transactions
@@ -285,15 +285,15 @@ impl<T: Connection + Ord + Clone + 'static> ProtoClientImpl<T> {
             anyhow::bail!("This method is not supported by light nodes")
         }
 
-        let request = rpc::Request {
+        let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
             call: Some(rpc::request::Call::GetTransaction(
                 rpc::request::GetTransaction {
                     id: bytes::Bytes::copy_from_slice(tx_hash.as_slice()),
                 },
             )),
-        };
+        });
 
-        let response = self.request(request).await?.into_inner();
+        let response = self.request(&request).await?.into_inner();
         match response.result {
             Some(rpc::response::Result::GetRawTransaction(tx)) => match tx.transaction {
                 Some(bytes) => Ok(Some(Transaction::construct_from_bytes(bytes.as_ref())?)),
@@ -303,9 +303,13 @@ impl<T: Connection + Ord + Clone + 'static> ProtoClientImpl<T> {
         }
     }
 
-    async fn request(&self, request: rpc::Request) -> Result<Answer<rpc::Response>, RunError> {
-        let request: RpcRequest<()> = RpcRequest::PROTO(request);
-
+    pub async fn request<'a, S>(
+        &self,
+        request: &RpcRequest<'a, S>,
+    ) -> Result<Answer<rpc::Response>, RunError>
+    where
+        S: Serialize + Send + Sync + Clone,
+    {
         const NUM_RETRIES: usize = 10;
 
         for tries in 0..=NUM_RETRIES {
@@ -315,7 +319,7 @@ impl<T: Connection + Ord + Clone + 'static> ProtoClientImpl<T> {
                 .await
                 .ok_or::<RunError>(ClientError::NoEndpointsAvailable.into())?;
 
-            let response = match client.request(&request).await {
+            let response = match client.request(request).await {
                 Ok(res) => decode_answer(res).await,
                 Err(e) => Err(e.into()),
             };
