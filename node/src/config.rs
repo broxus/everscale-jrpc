@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use everscale_network::{adnl, dht, overlay, rldp};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use ton_indexer::OldBlocksPolicy;
+use ton_indexer::{OldBlocksPolicy, PersistentStateOptions};
 
 /// Full application config
 #[derive(Serialize, Deserialize, Clone)]
@@ -102,6 +102,11 @@ impl NodeConfig {
             sync_options: ton_indexer::SyncOptions {
                 old_blocks_policy,
                 parallel_archive_downloads: self.parallel_archive_downloads,
+                ..Default::default()
+            },
+            persistent_state_options: PersistentStateOptions {
+                prepare_persistent_states: true,
+                remove_old_states: true,
                 ..Default::default()
             },
             adnl_options: self.adnl_options,

@@ -200,6 +200,28 @@ impl RpcClient {
             }
         }
     }
+
+    pub async fn request<'a, S, D>(
+        &self,
+        request: &RpcRequest<'a, S>,
+    ) -> Result<RpcResponse<D>, RunError>
+    where
+        S: Serialize + Send + Sync + Clone,
+        for<'de> D: Deserialize<'de>,
+    {
+        let response = match self {
+            RpcClient::Jrpc(client) => {
+                let res: Answer<_> = client.request(request).await?;
+                RpcResponse::JRPC(res)
+            }
+            RpcClient::Proto(client) => {
+                let res = client.request(request).await?;
+                RpcResponse::PROTO(res)
+            }
+        };
+
+        Ok(response)
+    }
 }
 
 #[async_trait::async_trait]
@@ -515,9 +537,23 @@ pub trait Connection: Send + Sync {
     }
 }
 
-pub enum RpcRequest<'a, T: Serialize + Send + Sync> {
+pub enum RpcRequest<'a, T> {
     JRPC(JrpcRequest<'a, T>),
     PROTO(rpc::Request),
+}
+
+impl<'a, S: Serialize + Send + Sync> RpcRequest<'a, S> {
+    pub fn create_jrpc_request(method: &'a str, params: S) -> Self {
+        Self::JRPC(JrpcRequest::new(method, params))
+    }
+}
+
+pub enum RpcResponse<D>
+where
+    for<'de> D: Deserialize<'de>,
+{
+    JRPC(Answer<D>),
+    PROTO(Answer<rpc::Response>),
 }
 
 pub struct State<T> {
