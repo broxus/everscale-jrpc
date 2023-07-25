@@ -9,7 +9,6 @@ async fn main() -> Result<()> {
     let client = everscale_rpc_client::RpcClient::new(
         ["https://jrpc.everwallet.net/rpc".parse().unwrap()],
         everscale_rpc_client::ClientOptions::default(),
-        everscale_rpc_client::ClientType::Jrpc,
     )
     .await
     .unwrap();

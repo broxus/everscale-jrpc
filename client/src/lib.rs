@@ -36,18 +36,24 @@ pub enum RpcClient {
 }
 
 impl RpcClient {
-    pub async fn new<I: Iterator<Item = Url> + Clone + Send>(
+    pub async fn new<I: IntoIterator<Item = Url> + Send + Clone>(
         endpoints: I,
         options: ClientOptions,
     ) -> Result<Self> {
-        let is_proto = endpoints.clone().all(|x| x.as_str().ends_with("/proto"));
+        let is_proto = endpoints
+            .clone()
+            .into_iter()
+            .all(|x| x.as_str().ends_with("/proto"));
         if is_proto {
             return Ok(RpcClient::Proto(
                 ProtoClient::new(endpoints, options).await?,
             ));
         }
 
-        let is_jrpc = endpoints.clone().all(|x| x.as_str().ends_with("/rpc"));
+        let is_jrpc = endpoints
+            .clone()
+            .into_iter()
+            .all(|x| x.as_str().ends_with("/rpc"));
         if is_jrpc {
             return Ok(RpcClient::Jrpc(JrpcClient::new(endpoints, options).await?));
         }
