@@ -181,8 +181,7 @@ impl<T: Connection + Ord + Clone + 'static> JrpcClientImpl<T> {
         L: Serialize + Send + Sync + Clone,
         for<'de> D: Deserialize<'de>,
     {
-        let request: ConnectionRequest<_, everscale_proto::rpc::Request> =
-            ConnectionRequest::JRPC(JrpcRequest { method, params });
+        let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest { method, params });
 
         const NUM_RETRIES: usize = 10;
 
@@ -318,11 +317,10 @@ impl Connection for JrpcConnection {
     }
 
     async fn is_alive_inner(&self) -> LiveCheckResult {
-        let request: ConnectionRequest<_, everscale_proto::rpc::Request> =
-            ConnectionRequest::JRPC(JrpcRequest {
-                method: "getTimings",
-                params: (),
-            });
+        let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
+            method: "getTimings",
+            params: (),
+        });
 
         let res = match self.request(&request).await {
             Ok(res) => res.json::<JsonRpcResponse>().await,
@@ -369,11 +367,10 @@ impl Connection for JrpcConnection {
             }
         }
 
-        let request: ConnectionRequest<_, everscale_proto::rpc::Request> =
-            ConnectionRequest::JRPC(JrpcRequest {
-                method: "getLatestKeyBlock",
-                params: (),
-            });
+        let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
+            method: "getLatestKeyBlock",
+            params: (),
+        });
 
         let res = match self.request(&request).await {
             Ok(res) => res.json::<JsonRpcResponse>().await,
@@ -421,7 +418,7 @@ impl Connection for JrpcConnection {
 }
 
 #[derive(Debug, Clone)]
-struct JrpcRequest<'a, T> {
+pub struct JrpcRequest<'a, T> {
     method: &'a str,
     params: T,
 }

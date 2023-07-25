@@ -305,7 +305,7 @@ impl<T: Connection + Ord + Clone + 'static> ProtoClientImpl<T> {
     }
 
     async fn request(&self, request: rpc::Request) -> Result<Answer<rpc::Response>, RunError> {
-        let request: ConnectionRequest<String, _> = ConnectionRequest::PROTO(request);
+        let request: RpcRequest<()> = RpcRequest::PROTO(request);
 
         const NUM_RETRIES: usize = 10;
 
@@ -468,7 +468,7 @@ impl Connection for ProtoConnection {
     }
 
     async fn is_alive_inner(&self) -> LiveCheckResult {
-        let request: ConnectionRequest<String, _> = ConnectionRequest::PROTO(rpc::Request {
+        let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
             call: Some(rpc::request::Call::GetTimings(())),
         });
 
@@ -517,7 +517,7 @@ impl Connection for ProtoConnection {
         }
 
         // falback to keyblock request
-        let request: ConnectionRequest<String, _> = ConnectionRequest::PROTO(rpc::Request {
+        let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
             call: Some(rpc::request::Call::GetLatestKeyBlock(())),
         });
 

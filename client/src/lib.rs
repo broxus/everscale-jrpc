@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use everscale_proto::prost::Message;
+use everscale_proto::rpc;
 use futures::StreamExt;
 use itertools::Itertools;
 use nekoton::transport::models::ExistingContract;
@@ -22,7 +23,7 @@ use ton_block::{GetRepresentationHash, MsgAddressInt, Transaction};
 
 use everscale_rpc_models::Timings;
 
-use crate::jrpc::JrpcClient;
+use crate::jrpc::{JrpcClient, JrpcRequest};
 use crate::proto::ProtoClient;
 
 mod jrpc;
@@ -492,17 +493,17 @@ pub trait Connection: Send + Sync {
 
     async fn method_is_supported(&self, method: &str) -> Result<bool>;
 
-    async fn request<T: Serialize + Send + Sync, B: Message>(
+    async fn request<T: Serialize + Send + Sync>(
         &self,
-        request: &ConnectionRequest<T, B>,
+        request: &RpcRequest<T>,
     ) -> Result<reqwest::Response, reqwest::Error> {
         let req = match request {
-            ConnectionRequest::JRPC(request) => self
+            RpcRequest::JRPC(request) => self
                 .get_client()
                 .post(self.endpoint())
                 .header(CONTENT_TYPE, "application/json")
                 .json(request),
-            ConnectionRequest::PROTO(request) => self
+            RpcRequest::PROTO(request) => self
                 .get_client()
                 .post(self.endpoint())
                 .header(CONTENT_TYPE, "application/x-protobuf")
@@ -514,9 +515,9 @@ pub trait Connection: Send + Sync {
     }
 }
 
-pub enum ConnectionRequest<T: Serialize + Send + Sync, B: Message> {
-    JRPC(T),
-    PROTO(B),
+pub enum RpcRequest<'a, T: Serialize + Send + Sync> {
+    JRPC(JrpcRequest<'a, T>),
+    PROTO(rpc::Request),
 }
 
 pub struct State<T> {
