@@ -10,4 +10,4 @@ nekoton-abi = { git = "https://github.com/broxus/nekoton.git", default-features 
 nekoton-utils = { git = "https://github.com/broxus/nekoton.git", default-features = false }
 ton_block = { git = "https://github.com/broxus/ton-labs-block.git" }
 
-everscale-proto = { path = "../proto" }
+everscale-rpc-proto = { path = "../proto" }

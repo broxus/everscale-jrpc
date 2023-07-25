@@ -14,9 +14,8 @@ use ton_block::{
 use ton_types::UInt256;
 
 use everscale_rpc_models::Timings;
-
-use everscale_proto::prost::{bytes, Message};
-use everscale_proto::{
+use everscale_rpc_proto::prost::{bytes, Message};
+use everscale_rpc_proto::{
     rpc,
     rpc::response::get_contract_state::contract_state::{GenTimings, LastTransactionId},
 };

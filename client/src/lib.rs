@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use everscale_proto::prost::Message;
-use everscale_proto::rpc;
+use everscale_rpc_proto::prost::Message;
+use everscale_rpc_proto::rpc;
 use futures::StreamExt;
 use itertools::Itertools;
 use nekoton::transport::models::ExistingContract;

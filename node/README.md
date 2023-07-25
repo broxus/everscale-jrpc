@@ -1,9 +1,9 @@
 ## How to run
 
 ```bash
-cargo build --release -p everscale-jrpc-node
+cargo build --release -p everscale-rpc-node
 
-target/release/everscale-jrpc-node \
+target/release/everscale-rpc-node \
     --config path/to/config.yaml \
     --global-config path/to/global-config.json
 ```
@@ -19,11 +19,11 @@ rpc_config:
   # States RPC endpoint
   listen_address: "0.0.0.0:8081"
   generate_stub_keyblock: true
-  # # Or use minimal JRPC API without fields below:
+  # # Or use minimal RPC API without fields below:
   # type: simple
   type: full
-  # Path to the separate DB for transactions and other JRPC stuff
-  persistent_db_path: "/var/db/jrpc-storage"
+  # Path to the separate DB for transactions and other RPC stuff
+  persistent_db_path: "/var/db/rpc-storage"
   # # Virtual shards depth to use during shard state accounts processing
   # shard_split_depth: 4
 
@@ -36,7 +36,7 @@ metrics_settings:
 
 node_settings:
   # Root directory for node DB. Default: "./db"
-  db_path: "/var/db/jrpc"
+  db_path: "/var/db/rpc"
 
   # UDP port, used for ADNL node. Default: 30303
   adnl_port: 30000
@@ -44,7 +44,7 @@ node_settings:
   # Path to temporary ADNL keys.
   # NOTE: Will be generated if it was not there.
   # Default: "./adnl-keys.json"
-  temp_keys_path: "/etc/jrpc/adnl-keys.json"
+  temp_keys_path: "/etc/rpc/adnl-keys.json"
 
   # Archives map queue. Default: 16
   parallel_archive_downloads: 32

@@ -33,7 +33,7 @@ ton_block = { git = "https://github.com/broxus/ton-labs-block.git" }
 ton_types = { git = "https://github.com/broxus/ton-labs-types.git" }
 
 everscale-rpc-models = { path = "../models" }
-everscale-proto = { path = "../proto" }
+everscale-rpc-proto = { path = "../proto" }
 
 [dev-dependencies]
 hex = "0.4"

@@ -590,7 +590,7 @@ mod test {
     }
 
     async fn get_client() -> JrpcClient {
-        let pr = JrpcClient::new(
+        JrpcClient::new(
             [
                 "https://jrpc.everwallet.net/rpc".parse().unwrap(),
                 "http://127.0.0.1:8081".parse().unwrap(),
@@ -601,8 +601,7 @@ mod test {
             },
         )
         .await
-        .unwrap();
-        pr
+        .unwrap()
     }
 
     #[test]

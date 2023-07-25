@@ -12,10 +12,11 @@ for the Everscale/Venom blockchains.
 
 ### Contents
 
-- [`everscale-jrpc-models`](./models) - models used on servers and clients.
-- [`everscale-jrpc-server`](./server) - module implementation.
-- [`everscale-jrpc-client`](./client/README.md) - JRPC client implementation.
-- [`everscale-jrpc-node`](./node/README.md) - a simple light node with the JRPC module.
+- [`everscale-rpc-models`](./models) - models used on servers and clients.
+- [`everscale-rpc-proto`](./proto) - Protobuf models used for binary transport.
+- [`everscale-rpc-server`](./server) - module implementation.
+- [`everscale-rpc-client`](./client/README.md) - JRPC client implementation.
+- [`everscale-rpc-node`](./node/README.md) - a simple light node with the JRPC module.
 
 ## Methods
 
