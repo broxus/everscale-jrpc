@@ -14,17 +14,17 @@ use everscale_rpc_models::jrpc;
 use crate::server::Server;
 use crate::storage::ShardAccountFromCache;
 use crate::utils::{self, QueryError, QueryResult};
-use crate::{Counters, ServerState};
+use crate::{Counters, RpcState};
 
 pub struct JrpcServer {
-    state: Arc<ServerState>,
+    state: Arc<RpcState>,
     capabilities_response: serde_json::Value,
     key_block_response: Arc<ArcSwapOption<serde_json::Value>>,
     config_response: Arc<ArcSwapOption<serde_json::Value>>,
 }
 
 impl JrpcServer {
-    pub fn new(state: Arc<ServerState>) -> Result<Arc<Self>> {
+    pub fn new(state: Arc<RpcState>) -> Result<Arc<Self>> {
         // Prepare capabilities response as it doesn't change anymore
         let capabilities_response = {
             let mut capabilities = vec![

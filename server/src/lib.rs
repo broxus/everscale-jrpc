@@ -72,7 +72,7 @@ impl ApiConfig {
     }
 }
 
-pub struct ServerState {
+pub struct RpcState {
     config: Config,
     engine: ArcSwapWeak<ton_indexer::Engine>,
     runtime_storage: RuntimeStorage,
@@ -81,7 +81,7 @@ pub struct ServerState {
     proto_counters: Counters,
 }
 
-impl ServerState {
+impl RpcState {
     pub fn new(config: Config) -> Result<Self> {
         let persistent_storage = match &config.api_config {
             ApiConfig::Simple(..) => None,

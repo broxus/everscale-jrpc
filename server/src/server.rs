@@ -13,23 +13,23 @@ use axum::RequestExt;
 
 use crate::jrpc;
 use crate::proto;
-use crate::ServerState;
+use crate::RpcState;
 
 pub struct Server {
-    state: Arc<ServerState>,
+    state: Arc<RpcState>,
     jrpc: Arc<jrpc::JrpcServer>,
     proto: Arc<proto::ProtoServer>,
 }
 
 impl Server {
-    pub fn new(state: Arc<ServerState>) -> Result<Arc<Self>> {
+    pub fn new(state: Arc<RpcState>) -> Result<Arc<Self>> {
         let jrpc = jrpc::JrpcServer::new(state.clone())?;
         let proto = proto::ProtoServer::new(state.clone())?;
 
         Ok(Arc::new(Self { state, jrpc, proto }))
     }
 
-    pub fn state(&self) -> &Arc<ServerState> {
+    pub fn state(&self) -> &Arc<RpcState> {
         &self.state
     }
 

@@ -20,17 +20,17 @@ use ton_block::{Deserializable, MsgAddressInt, Serializable};
 use crate::server::Server;
 use crate::storage::ShardAccountFromCache;
 use crate::utils::{self, QueryError, QueryResult};
-use crate::{Counters, ServerState};
+use crate::{Counters, RpcState};
 
 pub struct ProtoServer {
-    state: Arc<ServerState>,
+    state: Arc<RpcState>,
     capabilities_response: rpc::response::GetCapabilities,
     key_block_response: Arc<ArcSwapOption<rpc::response::GetLatestKeyBlock>>,
     config_response: Arc<ArcSwapOption<rpc::response::GetBlockchainConfig>>,
 }
 
 impl ProtoServer {
-    pub fn new(state: Arc<ServerState>) -> Result<Arc<Self>> {
+    pub fn new(state: Arc<RpcState>) -> Result<Arc<Self>> {
         // Prepare capabilities response as it doesn't change anymore
         let capabilities_response = {
             let mut capabilities = vec![
