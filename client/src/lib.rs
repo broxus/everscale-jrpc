@@ -36,14 +36,26 @@ pub enum RpcClient {
 }
 
 impl RpcClient {
-    pub async fn new<I: IntoIterator<Item = Url> + Send>(
+    pub async fn new<I: Iterator<Item = Url> + Clone + Send>(
         endpoints: I,
         options: ClientOptions,
-        client_type: ClientType,
     ) -> Result<Self> {
-        let client = match client_type {
-            ClientType::Jrpc => RpcClient::Jrpc(JrpcClient::new(endpoints, options).await?),
-            ClientType::Proto => RpcClient::Proto(ProtoClient::new(endpoints, options).await?),
+        let is_proto = endpoints.clone().all(|x| x.as_str().ends_with("/proto"));
+        if is_proto {
+            return Ok(RpcClient::Proto(
+                ProtoClient::new(endpoints, options).await?,
+            ));
+        }
+
+        let is_jrpc = endpoints.clone().all(|x| x.as_str().ends_with("/rpc"));
+        if is_jrpc {
+            return Ok(RpcClient::Jrpc(JrpcClient::new(endpoints, options).await?));
+        }
+
+        let result = ProtoClient::new(endpoints.clone(), options.clone()).await;
+        let client = match result {
+            Ok(client) => RpcClient::Proto(client),
+            Err(_) => RpcClient::Jrpc(JrpcClient::new(endpoints, options).await?),
         };
 
         Ok(client)
@@ -180,11 +192,6 @@ impl RpcClient {
             }
         }
     }
-}
-
-pub enum ClientType {
-    Jrpc,
-    Proto,
 }
 
 #[async_trait::async_trait]
