@@ -251,6 +251,13 @@ impl JrpcServer {
         req: &jrpc::GetContractStateRequest,
     ) -> QueryResult<serde_json::Value> {
         let state = match self.state.runtime_storage.get_contract_state(&req.address) {
+            Ok(ShardAccountFromCache::Found(state))
+                if Some(state.last_transaction_id.lt()) == req.last_trans_lt =>
+            {
+                return Ok(
+                    serde_json::to_value(jrpc::GetContractStateResponse::Unchanged).unwrap(),
+                );
+            }
             Ok(ShardAccountFromCache::Found(state)) => state,
             Ok(ShardAccountFromCache::NotFound) => {
                 return Ok(

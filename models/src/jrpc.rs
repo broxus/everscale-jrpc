@@ -12,6 +12,9 @@ pub struct GetContractStateRequest {
     /// Address as string
     #[serde(with = "serde_address")]
     pub address: ton_block::MsgAddressInt,
+    /// last transaction lt on this account
+    #[serde(default, with = "serde_optional_u64")]
+    pub last_trans_lt: Option<u64>,
 }
 
 impl Request for GetContractStateRequest {
@@ -44,6 +47,7 @@ pub enum GetContractStateResponse {
         timings: nekoton_abi::GenTimings,
         last_transaction_id: nekoton_abi::LastTransactionId,
     },
+    Unchanged,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
