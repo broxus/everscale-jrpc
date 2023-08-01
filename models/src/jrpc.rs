@@ -47,7 +47,9 @@ pub enum GetContractStateResponse {
         timings: nekoton_abi::GenTimings,
         last_transaction_id: nekoton_abi::LastTransactionId,
     },
-    Unchanged,
+    Unchanged {
+        timings: nekoton_abi::GenTimings,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -110,7 +110,7 @@ where
                 timings,
                 last_transaction_id,
             })),
-            jrpc::GetContractStateResponse::Unchanged => {
+            jrpc::GetContractStateResponse::Unchanged { .. } => {
                 anyhow::bail!("Contract state is unchanged")
             }
         }
@@ -144,9 +144,9 @@ where
                 timings,
                 last_transaction_id,
             })),
-            jrpc::GetContractStateResponse::Unchanged => Err(RunError::Generic(anyhow::anyhow!(
-                "Contract state is unchanged"
-            ))),
+            jrpc::GetContractStateResponse::Unchanged { .. } => Err(RunError::Generic(
+                anyhow::anyhow!("Contract state is unchanged"),
+            )),
         }
     }
 }
