@@ -26,8 +26,8 @@ use everscale_rpc_models::Timings;
 use crate::jrpc::{JrpcClient, JrpcRequest};
 use crate::proto::ProtoClient;
 
-mod jrpc;
-mod proto;
+pub mod jrpc;
+pub mod proto;
 
 static ROUND_ROBIN_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
