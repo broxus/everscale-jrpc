@@ -66,9 +66,10 @@ where
             CommonMsgInfo::ExtInMsgInfo(_) => {}
         }
 
+        let params = &jrpc::SendMessageRequest { message };
         let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
             method: "sendMessage",
-            params: jrpc::SendMessageRequest { message },
+            params,
         });
 
         self.request(&request).await.map(|x| x.result)
@@ -76,9 +77,10 @@ where
 
     async fn get_dst_transaction(&self, message_hash: &[u8]) -> Result<Option<Transaction>> {
         let message_hash = message_hash.try_into().context("Invalid message hash")?;
+        let params = &jrpc::GetDstTransactionRequest { message_hash };
         let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
             method: "getDstTransaction",
-            params: jrpc::GetDstTransactionRequest { message_hash },
+            params,
         });
 
         let result: Vec<u8> = match self.request(&request).await?.into_inner() {
@@ -94,9 +96,10 @@ where
         &self,
         address: &MsgAddressInt,
     ) -> Result<Option<ExistingContract>> {
+        let params = &jrpc::GetContractStateRequestRef { address };
         let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
             method: "getContractState",
-            params: jrpc::GetContractStateRequestRef { address },
+            params,
         });
 
         match self.request(&request).await?.into_inner() {
@@ -121,9 +124,11 @@ where
         address: &MsgAddressInt,
         time: u32,
     ) -> Result<Option<ExistingContract>, RunError> {
+        let params = &jrpc::GetContractStateRequestRef { address };
+
         let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
             method: "getContractState",
-            params: jrpc::GetContractStateRequestRef { address },
+            params,
         });
 
         let response = self.request(&request).await?;
@@ -149,7 +154,7 @@ impl<T: Connection + Ord + Clone + 'static> JrpcClientImpl<T> {
     pub async fn get_latest_key_block(&self) -> Result<jrpc::GetLatestKeyBlockResponse, RunError> {
         let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
             method: "getLatestKeyBlock",
-            params: (),
+            params: &(),
         });
 
         self.request(&request).await.map(|x| x.result)
@@ -161,13 +166,15 @@ impl<T: Connection + Ord + Clone + 'static> JrpcClientImpl<T> {
         account: &MsgAddressInt,
         last_transaction_lt: Option<u64>,
     ) -> Result<Vec<Transaction>> {
+        let params = &jrpc::GetTransactionsListRequestRef {
+            account,
+            limit,
+            last_transaction_lt,
+        };
+
         let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
             method: "getTransactionsList",
-            params: jrpc::GetTransactionsListRequestRef {
-                account,
-                limit,
-                last_transaction_lt,
-            },
+            params,
         });
 
         let data: Vec<String> = self.request(&request).await?.into_inner();
@@ -184,11 +191,13 @@ impl<T: Connection + Ord + Clone + 'static> JrpcClientImpl<T> {
             anyhow::bail!("This method is not supported by light nodes")
         }
 
+        let params = &jrpc::GetTransactionRequestRef {
+            id: tx_hash.as_slice(),
+        };
+
         let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
             method: "getTransaction",
-            params: jrpc::GetTransactionRequestRef {
-                id: tx_hash.as_slice(),
-            },
+            params,
         });
 
         let data: Option<String> = self.request(&request).await?.into_inner();
@@ -350,7 +359,7 @@ impl Connection for JrpcConnection {
     async fn is_alive_inner(&self) -> LiveCheckResult {
         let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
             method: "getTimings",
-            params: (),
+            params: &(),
         });
 
         let res = match self.request(&request).await {
@@ -400,7 +409,7 @@ impl Connection for JrpcConnection {
 
         let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
             method: "getLatestKeyBlock",
-            params: (),
+            params: &(),
         });
 
         let res = match self.request(&request).await {
@@ -425,10 +434,10 @@ impl Connection for JrpcConnection {
     }
 
     async fn method_is_supported(&self, method: &str) -> Result<bool> {
-        let req = self
-            .client
-            .post(self.endpoint.as_str())
-            .json(&JrpcRequest { method, params: () });
+        let req = self.client.post(self.endpoint.as_str()).json(&JrpcRequest {
+            method,
+            params: &(),
+        });
 
         let JsonRpcResponse { result } = req.send().await?.json().await?;
         let res = match result {
@@ -451,11 +460,11 @@ impl Connection for JrpcConnection {
 #[derive(Debug, Clone)]
 pub struct JrpcRequest<'a, T> {
     method: &'a str,
-    params: T,
+    params: &'a T,
 }
 
 impl<'a, T: Serialize> JrpcRequest<'a, T> {
-    pub fn new(method: &'a str, params: T) -> Self {
+    pub fn new(method: &'a str, params: &'a T) -> Self {
         Self { method, params }
     }
 }
@@ -471,7 +480,7 @@ impl<T: Serialize> Serialize for JrpcRequest<'_, T> {
         s.serialize_field("jsonrpc", "2.0")?;
         s.serialize_field("id", &0)?;
         s.serialize_field("method", self.method)?;
-        s.serialize_field("params", &self.params)?;
+        s.serialize_field("params", self.params)?;
         s.end()
     }
 }

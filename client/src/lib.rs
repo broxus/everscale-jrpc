@@ -542,8 +542,8 @@ pub enum RpcRequest<'a, T> {
     PROTO(rpc::Request),
 }
 
-impl<'a, S: Serialize + Send + Sync> RpcRequest<'a, S> {
-    pub fn create_jrpc_request(method: &'a str, params: S) -> Self {
+impl<'a, T: Serialize + Send + Sync> RpcRequest<'a, T> {
+    pub fn create_jrpc_request(method: &'a str, params: &'a T) -> Self {
         Self::JRPC(JrpcRequest::new(method, params))
     }
 }
