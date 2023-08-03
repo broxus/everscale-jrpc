@@ -546,6 +546,10 @@ impl<'a, T: Serialize + Send + Sync> RpcRequest<'a, T> {
     pub fn create_jrpc_request(method: &'a str, params: &'a T) -> Self {
         Self::JRPC(JrpcRequest::new(method, params))
     }
+
+    pub fn create_proto_request(req: rpc::Request) -> Self {
+        Self::PROTO(req)
+    }
 }
 
 pub enum RpcResponse<D>
@@ -775,6 +779,10 @@ pub enum RunError {
     NetworkError(#[from] reqwest::Error),
     #[error("Jrpc error: {0}")]
     JrpcClientError(#[from] ClientError),
+    #[cfg(not(feature = "simd"))]
+    #[error("JSON error: {0}")]
+    ParseError(#[from] serde_json::Error),
+    #[cfg(feature = "simd")]
     #[error("JSON error: {0}")]
     ParseError(#[from] simd_json::Error),
     #[error("Invalid message type: {0}")]

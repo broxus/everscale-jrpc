@@ -255,6 +255,9 @@ impl<T: Connection + Ord + Clone + 'static> JrpcClientImpl<T> {
             match response.result {
                 JsonRpcAnswer::Result(result) => {
                     return Ok(Answer {
+                        #[cfg(not(feature = "simd"))]
+                        result: serde_json::from_value(result)?,
+                        #[cfg(feature = "simd")]
                         result: simd_json::serde::from_owned_value(result)?,
                         node_stats: client.get_stats(),
                     })
@@ -381,8 +384,13 @@ impl Connection for JrpcConnection {
 
         match result.result {
             JsonRpcAnswer::Result(v) => {
+                #[cfg(not(feature = "simd"))]
+                let timings: Result<jrpc::GetTimingsResponse, _> = serde_json::from_value(v);
+
+                #[cfg(feature = "simd")]
                 let timings: Result<jrpc::GetTimingsResponse, _> =
                     simd_json::serde::from_owned_value(v);
+
                 if let Ok(t) = timings {
                     let t = Timings::from(t);
                     let is_reliable = t.is_reliable();
@@ -497,6 +505,9 @@ pub struct JsonRpcResponse {
 #[serde(rename_all = "lowercase")]
 /// JsonRpc [response object](https://www.jsonrpc.org/specification#response_object)
 pub enum JsonRpcAnswer {
+    #[cfg(not(feature = "simd"))]
+    Result(serde_json::Value),
+    #[cfg(feature = "simd")]
     Result(simd_json::owned::Value),
     Error(JsonRpcError),
 }
