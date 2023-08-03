@@ -255,7 +255,7 @@ impl<T: Connection + Ord + Clone + 'static> JrpcClientImpl<T> {
             match response.result {
                 JsonRpcAnswer::Result(result) => {
                     return Ok(Answer {
-                        result: serde_json::from_value(result)?,
+                        result: simd_json::serde::from_owned_value(result)?,
                         node_stats: client.get_stats(),
                     })
                 }
@@ -381,7 +381,8 @@ impl Connection for JrpcConnection {
 
         match result.result {
             JsonRpcAnswer::Result(v) => {
-                let timings: Result<jrpc::GetTimingsResponse, _> = serde_json::from_value(v);
+                let timings: Result<jrpc::GetTimingsResponse, _> =
+                    simd_json::serde::from_owned_value(v);
                 if let Ok(t) = timings {
                     let t = Timings::from(t);
                     let is_reliable = t.is_reliable();
@@ -485,18 +486,18 @@ impl<T: Serialize> Serialize for JrpcRequest<'_, T> {
     }
 }
 
-#[derive(Serialize, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Serialize, Debug, Deserialize)]
 /// A JSON-RPC response.
 pub struct JsonRpcResponse {
     #[serde(flatten)]
     pub result: JsonRpcAnswer,
 }
 
-#[derive(Serialize, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Serialize, Debug, Deserialize)]
 #[serde(rename_all = "lowercase")]
 /// JsonRpc [response object](https://www.jsonrpc.org/specification#response_object)
 pub enum JsonRpcAnswer {
-    Result(serde_json::Value),
+    Result(simd_json::owned::Value),
     Error(JsonRpcError),
 }
 
@@ -652,7 +653,7 @@ mod test {
 
     #[test]
     fn test_serde() {
-        let err = r#"
+        let mut err = br#"
         {
 	        "jsonrpc": "2.0",
 	        "error": {
@@ -661,9 +662,10 @@ mod test {
 	        	"data": null
 	        },
 	        "id": 1
-        }"#;
+        }"#
+        .to_vec();
 
-        let resp: JsonRpcResponse = serde_json::from_str(err).unwrap();
+        let resp: JsonRpcResponse = simd_json::serde::from_slice(&mut err).unwrap();
         match resp.result {
             JsonRpcAnswer::Error(e) => {
                 assert_eq!(e.code, -32601);

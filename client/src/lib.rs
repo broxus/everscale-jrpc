@@ -776,7 +776,7 @@ pub enum RunError {
     #[error("Jrpc error: {0}")]
     JrpcClientError(#[from] ClientError),
     #[error("JSON error: {0}")]
-    ParseError(#[from] serde_json::Error),
+    ParseError(#[from] simd_json::Error),
     #[error("Invalid message type: {0}")]
     NotInboundMessage(String),
 }
