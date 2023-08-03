@@ -6,9 +6,9 @@ pub mod jrpc;
 
 pub const MC_ACCEPTABLE_TIME_DIFF: u64 = 120;
 pub const SC_ACCEPTABLE_TIME_DIFF: u64 = 120;
-pub const ACCEPTABLE_BLOCKS_DIFF: u32 = 10;
+const ACCEPTABLE_BLOCKS_DIFF: u32 = 500;
 
-pub const ACCEPTABLE_NODE_BLOCK_INSERT_TIME: u64 = 240;
+const ACCEPTABLE_NODE_BLOCK_INSERT_TIME: u64 = 240;
 
 pub fn now() -> u64 {
     SystemTime::now()
@@ -85,5 +85,31 @@ impl From<everscale_rpc_proto::rpc::response::GetTimings> for Timings {
             mc_time_diff: t.mc_time_diff,
             shard_client_time_diff: t.shard_client_time_diff,
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::Timings;
+
+    #[test]
+    fn reliable() {
+        let metrics = Timings {
+            last_mc_block_seqno: 100,
+            last_shard_client_mc_block_seqno: 91,
+            last_mc_utime: 100,
+            mc_time_diff: 0,
+            shard_client_time_diff: 0,
+        };
+        assert!(metrics.is_reliable());
+
+        let metrics = Timings {
+            last_mc_block_seqno: 100,
+            last_shard_client_mc_block_seqno: 83,
+            last_mc_utime: 100,
+            mc_time_diff: 150,
+            shard_client_time_diff: 130,
+        };
+        assert!(!metrics.is_reliable());
     }
 }
