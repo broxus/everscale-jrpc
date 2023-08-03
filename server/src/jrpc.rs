@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use arc_swap::ArcSwapOption;
 use axum::extract::State;
 use axum::response::IntoResponse;
+use nekoton_abi::GenTimings;
 use serde::Serialize;
 use ton_block::{Deserializable, Serializable};
 
@@ -251,6 +252,19 @@ impl JrpcServer {
         req: &jrpc::GetContractStateRequest,
     ) -> QueryResult<serde_json::Value> {
         let state = match self.state.runtime_storage.get_contract_state(&req.address) {
+            Ok(ShardAccountFromCache::Found(state))
+                if Some(state.last_transaction_id.lt()) <= req.last_trans_lt =>
+            {
+                return Ok(
+                    serde_json::to_value(jrpc::GetContractStateResponse::Unchanged {
+                        timings: GenTimings::Known {
+                            gen_lt: state.last_transaction_id.lt(),
+                            gen_utime: state.gen_utime,
+                        },
+                    })
+                    .unwrap(),
+                );
+            }
             Ok(ShardAccountFromCache::Found(state)) => state,
             Ok(ShardAccountFromCache::NotFound) => {
                 return Ok(

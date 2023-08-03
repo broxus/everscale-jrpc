@@ -1,2 +1,6 @@
 /.idea
 /target
+/config.yaml
+/db/
+/ton-global.config.json
+/adnl-keys.json
