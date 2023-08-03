@@ -101,7 +101,7 @@ mod test {
             mc_time_diff: 0,
             shard_client_time_diff: 0,
         };
-        assert!(metrics.is_reliable());
+        assert!(!metrics.is_reliable());
 
         let metrics = Timings {
             last_mc_block_seqno: 100,

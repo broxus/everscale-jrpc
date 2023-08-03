@@ -320,7 +320,7 @@ impl<T: Connection + Ord + Clone + 'static> ProtoClientImpl<T> {
                 .ok_or::<RunError>(ClientError::NoEndpointsAvailable.into())?;
 
             let response = match client.request(request).await {
-                Ok(res) => decode_answer(res).await,
+                Ok(res) => ProtoAnswer::parse_response(res).await,
                 Err(e) => Err(e.into()),
             };
 
@@ -482,7 +482,7 @@ impl Connection for ProtoConnection {
         });
 
         let response = match self.request(&request).await {
-            Ok(res) => decode_answer(res).await,
+            Ok(res) => ProtoAnswer::parse_response(res).await,
             Err(e) => Err(e.into()),
         };
 
@@ -531,7 +531,7 @@ impl Connection for ProtoConnection {
         });
 
         let response = match self.request(&request).await {
-            Ok(res) => decode_answer(res).await,
+            Ok(res) => ProtoAnswer::parse_response(res).await,
             Err(e) => Err(e.into()),
         };
 
@@ -588,16 +588,18 @@ impl Connection for ProtoConnection {
     }
 }
 
-async fn decode_answer(response: reqwest::Response) -> Result<ProtoAnswer> {
-    let res = match response.status() {
-        StatusCode::OK => ProtoAnswer::Result(rpc::Response::decode(response.bytes().await?)?),
-        _ => ProtoAnswer::Error(rpc::Error::decode(response.bytes().await?)?),
-    };
-
-    Ok(res)
-}
-
 pub enum ProtoAnswer {
     Result(rpc::Response),
     Error(rpc::Error),
+}
+
+impl ProtoAnswer {
+    pub async fn parse_response(response: reqwest::Response) -> Result<Self> {
+        let res = match response.status() {
+            StatusCode::OK => Self::Result(rpc::Response::decode(response.bytes().await?)?),
+            _ => Self::Error(rpc::Error::decode(response.bytes().await?)?),
+        };
+
+        Ok(res)
+    }
 }
