@@ -676,6 +676,9 @@ mod test {
         }"#
         .to_vec();
 
+        #[cfg(not(feature = "simd"))]
+        let resp: JsonRpcResponse = serde_json::from_slice(&mut err).unwrap();
+        #[cfg(feature = "simd")]
         let resp: JsonRpcResponse = simd_json::serde::from_slice(&mut err).unwrap();
         match resp.result {
             JsonRpcAnswer::Error(e) => {
