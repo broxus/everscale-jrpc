@@ -64,6 +64,9 @@ pub struct NodeConfig {
     pub overlay_shard_options: overlay::OverlayOptions,
     #[serde(default)]
     pub neighbours_options: ton_indexer::NeighboursOptions,
+
+    #[serde(default)]
+    pub persistent_state_options: ton_indexer::PersistentStateOptions,
 }
 
 impl NodeConfig {
@@ -104,6 +107,7 @@ impl NodeConfig {
                 parallel_archive_downloads: self.parallel_archive_downloads,
                 ..Default::default()
             },
+            persistent_state_options: self.persistent_state_options,
             adnl_options: self.adnl_options,
             rldp_options: self.rldp_options,
             dht_options: self.dht_options,
@@ -133,6 +137,7 @@ impl Default for NodeConfig {
             dht_options: Default::default(),
             neighbours_options: Default::default(),
             overlay_shard_options: Default::default(),
+            persistent_state_options: Default::default(),
         }
     }
 }
