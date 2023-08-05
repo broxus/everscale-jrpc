@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use arc_swap::ArcSwapWeak;
 use serde::{Deserialize, Serialize};
 use ton_indexer::utils::{BlockStuff, ShardStateStuff};
@@ -107,7 +107,13 @@ impl RpcState {
         })
     }
 
-    pub async fn initialize(&self, engine: &Arc<ton_indexer::Engine>) -> Result<()> {
+    pub async fn initialize(&self, engine: &Arc<ton_indexer::Engine>) -> Result<InitialState> {
+        let smallest_known_lt = self
+            .persistent_storage
+            .as_ref()
+            .context("runtime storage should be initialized")?
+            .load_smallest_lt_from_db()
+            .context("smallest known lt should be initialized because engine is initialized")?;
         match engine.load_last_key_block().await {
             Ok(last_key_block) => {
                 self.runtime_storage
@@ -122,14 +128,17 @@ impl RpcState {
                     return Err(e);
                 }
             }
-        }
+        };
 
         self.engine.store(Arc::downgrade(engine));
-        Ok(())
+        Ok(InitialState { smallest_known_lt })
     }
 
-    pub fn serve(self: Arc<Self>) -> Result<impl Future<Output = ()> + Send + 'static> {
-        Server::new(self)?.serve()
+    pub fn serve(
+        self: Arc<Self>,
+        state: InitialState,
+    ) -> Result<impl Future<Output = ()> + Send + 'static> {
+        Server::new(self, state)?.serve()
     }
 
     pub fn jrpc_metrics(&self) -> Metrics {
@@ -202,6 +211,10 @@ impl RpcState {
     pub(crate) fn proto_counters(&self) -> &Counters {
         &self.proto_counters
     }
+}
+
+pub struct InitialState {
+    pub smallest_known_lt: u64,
 }
 
 #[derive(Default)]

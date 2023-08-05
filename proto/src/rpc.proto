@@ -64,6 +64,7 @@ message Response {
     uint32  last_mc_utime                     = 3;
     int64   mc_time_diff                      = 4;
     int64   shard_client_time_diff            = 5;
+    uint64 smallest_known_lt                  = 6;
   }
 
   message GetStatus {

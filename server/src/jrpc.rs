@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -22,10 +22,11 @@ pub struct JrpcServer {
     capabilities_response: serde_json::Value,
     key_block_response: Arc<ArcSwapOption<serde_json::Value>>,
     config_response: Arc<ArcSwapOption<serde_json::Value>>,
+    smallest_known_lt: Arc<AtomicU64>,
 }
 
 impl JrpcServer {
-    pub fn new(state: Arc<RpcState>) -> Result<Arc<Self>> {
+    pub fn new(state: Arc<RpcState>, smallest_known_lt: Arc<AtomicU64>) -> Result<Arc<Self>> {
         // Prepare capabilities response as it doesn't change anymore
         let capabilities_response = {
             let mut capabilities = vec![
@@ -118,6 +119,7 @@ impl JrpcServer {
             capabilities_response,
             key_block_response,
             config_response,
+            smallest_known_lt,
         }))
     }
 }
@@ -244,6 +246,7 @@ impl JrpcServer {
             last_mc_utime: metrics.last_mc_utime.load(Ordering::Acquire),
             mc_time_diff: metrics.mc_time_diff.load(Ordering::Acquire),
             shard_client_time_diff: metrics.shard_client_time_diff.load(Ordering::Acquire),
+            smallest_known_lt: self.smallest_known_lt.load(Ordering::Acquire),
         })
     }
 

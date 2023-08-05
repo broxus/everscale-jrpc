@@ -395,6 +395,7 @@ pub struct GetTimingsResponse {
     pub last_mc_utime: u32,
     pub mc_time_diff: i64,
     pub shard_client_time_diff: i64,
+    pub smallest_known_lt: u64,
 }
 
 #[cfg(test)]
@@ -410,6 +411,7 @@ mod test {
             last_mc_utime: now() as u32,
             mc_time_diff: 100,
             shard_client_time_diff: 100,
+            smallest_known_lt: 0,
         };
 
         assert!(Timings::from(metrics).has_state_for(0));

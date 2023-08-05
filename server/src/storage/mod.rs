@@ -241,7 +241,6 @@ impl PersistentStorage {
                 opts.set_level_compaction_dynamic_level_bytes(true);
 
                 // compression opts
-                opts.set_zstd_max_train_bytes(32 * 1024 * 1024);
                 opts.set_compression_type(rocksdb::DBCompressionType::Zstd);
 
                 // io
@@ -289,6 +288,20 @@ impl PersistentStorage {
             inner,
             shard_split_depth,
         })
+    }
+
+    pub fn load_smallest_lt_from_db(&self) -> Option<u64> {
+        self.transactions
+            .iterator(rocksdb::IteratorMode::Start)
+            .filter_map(|x| x.ok())
+            .filter_map(|(k, _)| {
+                if k.len() != 41 {
+                    return None;
+                }
+                let k: [u8; 8] = k[33..].try_into().ok()?;
+                Some(u64::from_le_bytes(k))
+            })
+            .min()
     }
 
     pub fn load_snapshot(&self) -> Option<Arc<OwnedSnapshot>> {
