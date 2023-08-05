@@ -1,4 +1,4 @@
-use weedb::rocksdb::{BlockBasedOptions, Options};
+use weedb::rocksdb::{BlockBasedOptions, DBCompressionType, Options};
 use weedb::{Caches, ColumnFamily};
 
 /// - Key: `workchain: i8, account: u256, lt: u64`
@@ -77,4 +77,5 @@ fn default_block_based_table_factory(opts: &mut Options, caches: &Caches) {
     let mut block_factory = BlockBasedOptions::default();
     block_factory.set_block_cache(&caches.block_cache);
     opts.set_block_based_table_factory(&block_factory);
+    opts.set_compression_type(DBCompressionType::Zstd);
 }

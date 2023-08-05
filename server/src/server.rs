@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,9 +12,9 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::RequestExt;
 
-use crate::jrpc;
 use crate::proto;
 use crate::RpcState;
+use crate::{jrpc, InitialState};
 
 pub struct Server {
     state: Arc<RpcState>,
@@ -22,9 +23,10 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(state: Arc<RpcState>) -> Result<Arc<Self>> {
-        let jrpc = jrpc::JrpcServer::new(state.clone())?;
-        let proto = proto::ProtoServer::new(state.clone())?;
+    pub fn new(state: Arc<RpcState>, initial_state: InitialState) -> Result<Arc<Self>> {
+        let smallest_known_lt: Arc<AtomicU64> = Arc::new(initial_state.smallest_known_lt.into());
+        let jrpc = jrpc::JrpcServer::new(state.clone(), smallest_known_lt.clone())?;
+        let proto = proto::ProtoServer::new(state.clone(), smallest_known_lt)?;
 
         Ok(Arc::new(Self { state, jrpc, proto }))
     }
@@ -84,7 +86,6 @@ impl Server {
             .http2_adaptive_window(true)
             .tcp_keepalive(Duration::from_secs(60).into())
             .serve(router.into_make_service());
-
         Ok(async move { future.await.unwrap() })
     }
 }
