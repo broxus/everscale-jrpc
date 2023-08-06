@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use axum::response::IntoResponse;
 use nekoton::transport::models::ExistingContract;
 use parking_lot::Mutex;
 use reqwest::StatusCode;
@@ -14,6 +15,7 @@ use ton_block::{
 use ton_types::UInt256;
 
 use everscale_rpc_models::Timings;
+use everscale_rpc_proto::models::Protobuf;
 use everscale_rpc_proto::prost::{bytes, Message};
 use everscale_rpc_proto::{
     rpc,
@@ -601,5 +603,14 @@ impl ProtoAnswer {
         };
 
         Ok(res)
+    }
+}
+
+impl IntoResponse for ProtoAnswer {
+    fn into_response(self) -> axum::response::Response {
+        match self {
+            Self::Result(res) => Protobuf(res).into_response(),
+            Self::Error(e) => Protobuf(e).into_response(),
+        }
     }
 }
