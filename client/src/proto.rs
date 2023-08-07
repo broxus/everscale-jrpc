@@ -569,6 +569,12 @@ impl ProtoAnswer {
 
         Ok(res)
     }
+
+    pub fn success(result: rpc::response::Result) -> Self {
+        Self::Result(rpc::Response {
+            result: Some(result),
+        })
+    }
 }
 
 impl IntoResponse for ProtoAnswer {
