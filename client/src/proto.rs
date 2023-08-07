@@ -17,10 +17,7 @@ use ton_types::UInt256;
 use everscale_rpc_models::Timings;
 use everscale_rpc_proto::models::Protobuf;
 use everscale_rpc_proto::prost::{bytes, Message};
-use everscale_rpc_proto::{
-    rpc,
-    rpc::response::get_contract_state::contract_state::{GenTimings, LastTransactionId},
-};
+use everscale_rpc_proto::rpc;
 
 use crate::*;
 
@@ -134,31 +131,15 @@ where
                 Some(state) => {
                     let account = deserialize_account_stuff(&state.account)?;
 
-                    let timings = match state
+                    let timings = state
                         .gen_timings
                         .ok_or::<RunError>(ClientError::InvalidResponse.into())?
-                    {
-                        GenTimings::Known(t) => nekoton_abi::GenTimings::Known {
-                            gen_lt: t.gen_lt,
-                            gen_utime: t.gen_utime,
-                        },
-                        GenTimings::Unknown(()) => nekoton_abi::GenTimings::Unknown,
-                    };
+                        .into();
 
-                    let last_transaction_id = match state
+                    let last_transaction_id = state
                         .last_transaction_id
                         .ok_or::<RunError>(ClientError::InvalidResponse.into())?
-                    {
-                        LastTransactionId::Exact(lt) => {
-                            nekoton_abi::LastTransactionId::Exact(nekoton_abi::TransactionId {
-                                lt: lt.lt,
-                                hash: UInt256::from_slice(lt.hash.as_ref()),
-                            })
-                        }
-                        LastTransactionId::Inexact(lt) => nekoton_abi::LastTransactionId::Inexact {
-                            latest_lt: lt.latest_lt,
-                        },
-                    };
+                        .into();
 
                     Ok(Some(ExistingContract {
                         account,
@@ -196,31 +177,15 @@ where
                 Some(state) => {
                     let account = deserialize_account_stuff(&state.account)?;
 
-                    let timings = match state
+                    let timings = state
                         .gen_timings
                         .ok_or::<RunError>(ClientError::InvalidResponse.into())?
-                    {
-                        GenTimings::Known(t) => nekoton_abi::GenTimings::Known {
-                            gen_lt: t.gen_lt,
-                            gen_utime: t.gen_utime,
-                        },
-                        GenTimings::Unknown(()) => nekoton_abi::GenTimings::Unknown,
-                    };
+                        .into();
 
-                    let last_transaction_id = match state
+                    let last_transaction_id = state
                         .last_transaction_id
                         .ok_or::<RunError>(ClientError::InvalidResponse.into())?
-                    {
-                        LastTransactionId::Exact(lt) => {
-                            nekoton_abi::LastTransactionId::Exact(nekoton_abi::TransactionId {
-                                lt: lt.lt,
-                                hash: UInt256::from_slice(lt.hash.as_ref()),
-                            })
-                        }
-                        LastTransactionId::Inexact(lt) => nekoton_abi::LastTransactionId::Inexact {
-                            latest_lt: lt.latest_lt,
-                        },
-                    };
+                        .into();
 
                     Ok(Some(ExistingContract {
                         account,
