@@ -24,6 +24,7 @@ pub struct Timings {
     pub last_mc_utime: u32,
     pub mc_time_diff: i64,
     pub shard_client_time_diff: i64,
+    pub smallest_known_lt: Option<u64>,
 }
 
 impl Timings {
@@ -71,6 +72,11 @@ impl From<jrpc::GetTimingsResponse> for Timings {
             last_mc_utime: t.last_mc_utime,
             mc_time_diff: t.mc_time_diff,
             shard_client_time_diff: t.shard_client_time_diff,
+            smallest_known_lt: if t.smallest_known_lt == 0 {
+                None
+            } else {
+                Some(t.smallest_known_lt)
+            },
         }
     }
 }
@@ -84,6 +90,11 @@ impl From<everscale_rpc_proto::rpc::response::GetTimings> for Timings {
             last_mc_utime: t.last_mc_utime,
             mc_time_diff: t.mc_time_diff,
             shard_client_time_diff: t.shard_client_time_diff,
+            smallest_known_lt: if t.smallest_known_lt == 0 {
+                None
+            } else {
+                Some(t.smallest_known_lt)
+            },
         }
     }
 }
