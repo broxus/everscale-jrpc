@@ -130,8 +130,8 @@ async fn run(app: App) -> Result<()> {
     tracing::info!("initialized engine");
 
     // Start RPC after the engine is running
-    let initial_state = rpc_state.initialize(&engine).await?;
-    tokio::spawn(rpc_state.serve(initial_state)?);
+    rpc_state.initialize(&engine).await?;
+    tokio::spawn(rpc_state.serve()?);
     tracing::info!("initialized RPC");
 
     // Done

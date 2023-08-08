@@ -72,11 +72,7 @@ impl From<jrpc::GetTimingsResponse> for Timings {
             last_mc_utime: t.last_mc_utime,
             mc_time_diff: t.mc_time_diff,
             shard_client_time_diff: t.shard_client_time_diff,
-            smallest_known_lt: if t.smallest_known_lt == 0 {
-                None
-            } else {
-                Some(t.smallest_known_lt)
-            },
+            smallest_known_lt: t.smallest_known_lt,
         }
     }
 }
@@ -111,6 +107,7 @@ mod test {
             last_mc_utime: 100,
             mc_time_diff: 0,
             shard_client_time_diff: 0,
+            smallest_known_lt: None,
         };
         assert!(!metrics.is_reliable());
 
@@ -120,6 +117,7 @@ mod test {
             last_mc_utime: 100,
             mc_time_diff: 150,
             shard_client_time_diff: 130,
+            smallest_known_lt: None,
         };
         assert!(!metrics.is_reliable());
     }

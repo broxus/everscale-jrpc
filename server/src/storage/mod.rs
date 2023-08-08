@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -210,6 +211,8 @@ pub struct PersistentStorage {
     pub inner: WeeDb,
 
     pub shard_split_depth: u8,
+
+    pub smallest_known_transaction_lt: AtomicU64,
 }
 
 impl PersistentStorage {
@@ -278,8 +281,26 @@ impl PersistentStorage {
             .apply(migrations)
             .context("Failed to apply migrations")?;
 
+        // Find smallest lt
+        let transactions: Table<tables::Transactions> = inner.instantiate_table();
+
+        let now = Instant::now();
+        tracing::info!("computing the smallest known transaction lt");
+        let mut smallest_lt = u64::MAX;
+        for tx in transactions.iterator(rocksdb::IteratorMode::Start) {
+            let (k, _) = tx?;
+            if k.len() == tables::Transactions::KEY_LEN {
+                smallest_lt = smallest_lt.min(u64::from_be_bytes(k[33..].try_into().unwrap()));
+            }
+        }
+        tracing::info!(
+            elapsed = %humantime::format_duration(now.elapsed()),
+            smallest_lt,
+            "found the smallest known transaction lt",
+        );
+
         Ok(Self {
-            transactions: inner.instantiate_table(),
+            transactions,
             transactions_by_hash: inner.instantiate_table(),
             transactions_by_in_msg: inner.instantiate_table(),
             code_hashes: inner.instantiate_table(),
@@ -287,21 +308,8 @@ impl PersistentStorage {
             snapshot: Default::default(),
             inner,
             shard_split_depth,
+            smallest_known_transaction_lt: AtomicU64::new(smallest_lt),
         })
-    }
-
-    pub fn load_smallest_lt_from_db(&self) -> Option<u64> {
-        self.transactions
-            .iterator(rocksdb::IteratorMode::Start)
-            .filter_map(|x| x.ok())
-            .filter_map(|(k, _)| {
-                if k.len() != 41 {
-                    return None;
-                }
-                let k: [u8; 8] = k[33..].try_into().ok()?;
-                Some(u64::from_le_bytes(k))
-            })
-            .min()
     }
 
     pub fn load_snapshot(&self) -> Option<Arc<OwnedSnapshot>> {
@@ -452,6 +460,8 @@ impl PersistentStorage {
         let accounts = shard_state
             .map(|shard_state| shard_state.state().read_accounts())
             .transpose()?;
+
+        // 
 
         // Prepare column families
         let mut write_batch = rocksdb::WriteBatch::default();

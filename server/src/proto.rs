@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -24,11 +24,10 @@ pub struct ProtoServer {
     capabilities_response: rpc::response::GetCapabilities,
     key_block_response: Arc<ArcSwapOption<rpc::response::GetLatestKeyBlock>>,
     config_response: Arc<ArcSwapOption<rpc::response::GetBlockchainConfig>>,
-    smallest_known_lt: Arc<AtomicU64>,
 }
 
 impl ProtoServer {
-    pub fn new(state: Arc<RpcState>, smallest_known_lt: Arc<AtomicU64>) -> Result<Arc<Self>> {
+    pub fn new(state: Arc<RpcState>) -> Result<Arc<Self>> {
         // Prepare capabilities response as it doesn't change anymore
         let capabilities_response = {
             let mut capabilities = vec![
@@ -127,7 +126,6 @@ impl ProtoServer {
             capabilities_response,
             key_block_response,
             config_response,
-            smallest_known_lt,
         }))
     }
 }
@@ -252,7 +250,16 @@ impl ProtoServer {
                 last_mc_utime: metrics.last_mc_utime.load(Ordering::Acquire),
                 mc_time_diff: metrics.mc_time_diff.load(Ordering::Acquire),
                 shard_client_time_diff: metrics.shard_client_time_diff.load(Ordering::Acquire),
-                smallest_known_lt: self.smallest_known_lt.load(Ordering::Acquire),
+                smallest_known_lt: self
+                    .state
+                    .persistent_storage
+                    .as_ref()
+                    .map(|storage| {
+                        storage
+                            .smallest_known_transaction_lt
+                            .load(Ordering::Acquire)
+                    })
+                    .unwrap_or(u64::MAX),
             },
         ))
     }
