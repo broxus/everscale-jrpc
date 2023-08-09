@@ -9,5 +9,8 @@ bytes = "1.4.0"
 prost = "0.11"
 tracing = "0.1.37"
 
+nekoton-abi = { git = "https://github.com/broxus/nekoton.git", default-features = false }
+ton_types = { git = "https://github.com/broxus/ton-labs-types" }
+
 [build-dependencies]
 prost-build = "0.11"

@@ -905,6 +905,7 @@ version = "0.6.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "axum-core",
  "base64 0.13.1",
  "ed25519-dalek 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "everscale-rpc-models",
@@ -974,8 +975,10 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "bytes",
+ "nekoton-abi",
  "prost",
  "prost-build",
+ "ton_types",
  "tracing",
 ]
 
