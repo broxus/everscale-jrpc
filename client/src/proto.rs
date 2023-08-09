@@ -5,7 +5,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use axum::response::IntoResponse;
 use nekoton::transport::models::ExistingContract;
 use parking_lot::Mutex;
 use reqwest::StatusCode;
@@ -577,8 +576,8 @@ impl ProtoAnswer {
     }
 }
 
-impl IntoResponse for ProtoAnswer {
-    fn into_response(self) -> axum::response::Response {
+impl axum_core::response::IntoResponse for ProtoAnswer {
+    fn into_response(self) -> axum_core::response::Response {
         match self {
             Self::Result(res) => Protobuf(res).into_response(),
             Self::Error(e) => Protobuf(e).into_response(),
