@@ -5,7 +5,6 @@ use std::time::Duration;
 use anyhow::Result;
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, State};
-use axum::http::header::CONTENT_TYPE;
 use axum::http::{Request, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -96,7 +95,7 @@ async fn common_route(
 ) -> axum::response::Response {
     let content_type = req
         .headers()
-        .get(CONTENT_TYPE)
+        .get(axum::http::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok());
 
     if let Some(content_type) = content_type {
