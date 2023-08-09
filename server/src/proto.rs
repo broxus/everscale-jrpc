@@ -159,10 +159,7 @@ pub async fn proto_router(
                 }
                 Err(e) => {
                     self.counters.increase_errors();
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        (*e).without_id().into_response(),
-                    )
+                    (StatusCode::INTERNAL_SERVER_ERROR, (*e).without_id()).into_response()
                 }
             }
         }
