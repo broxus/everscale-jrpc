@@ -110,10 +110,19 @@ impl RpcClient {
     pub async fn get_contract_state(
         &self,
         address: &MsgAddressInt,
+        last_transaction_lt: Option<u64>,
     ) -> Result<Option<ExistingContract>> {
         match self {
-            RpcClient::Jrpc(client) => client.get_contract_state(address).await,
-            RpcClient::Proto(client) => client.get_contract_state(address).await,
+            RpcClient::Jrpc(client) => {
+                client
+                    .get_contract_state(address, last_transaction_lt)
+                    .await
+            }
+            RpcClient::Proto(client) => {
+                client
+                    .get_contract_state(address, last_transaction_lt)
+                    .await
+            }
         }
     }
 
@@ -312,8 +321,11 @@ where
 
     async fn get_dst_transaction(&self, message_hash: &[u8]) -> Result<Option<Transaction>>;
 
-    async fn get_contract_state(&self, address: &MsgAddressInt)
-        -> Result<Option<ExistingContract>>;
+    async fn get_contract_state(
+        &self,
+        address: &MsgAddressInt,
+        last_transaction_lt: Option<u64>,
+    ) -> Result<Option<ExistingContract>>;
 
     async fn get_contract_state_with_time_check(
         &self,
@@ -329,7 +341,7 @@ where
     ) -> Result<Option<nekoton::abi::ExecutionOutput>> {
         use nekoton::abi::FunctionExt;
 
-        let state = match self.get_contract_state(address).await? {
+        let state = match self.get_contract_state(address, None).await? {
             Some(a) => a,
             None => return Ok(None),
         };
@@ -348,7 +360,7 @@ where
             .context("Only inbound external messages are allowed")?;
 
         let config = self.get_blockchain_config().await?;
-        let dst_account = match self.get_contract_state(&message_dst).await? {
+        let dst_account = match self.get_contract_state(&message_dst, None).await? {
             None => ton_block::Account::AccountNone,
             Some(ac) => ton_block::Account::Account(ac.account),
         };
@@ -371,7 +383,7 @@ where
             .context("Only inbound external messages are allowed")?;
 
         let initial_state = self
-            .get_contract_state(dst)
+            .get_contract_state(dst, None)
             .await
             .context("Failed to get dst state")?;
 
@@ -387,7 +399,7 @@ where
         loop {
             tokio::time::sleep(options.poll_interval).await;
 
-            let state = self.get_contract_state(dst).await;
+            let state = self.get_contract_state(dst, None).await;
             let state = match (options.error_action, state) {
                 (TransportErrorAction::Poll, Err(e)) => {
                     tracing::error!("Error while polling for message: {e:?}. Continue polling");

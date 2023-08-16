@@ -28,6 +28,9 @@ pub struct GetContractStateRequestRef<'a> {
     /// Address as string
     #[serde(with = "serde_address")]
     pub address: &'a ton_block::MsgAddressInt,
+    /// last transaction lt on this account
+    #[serde(default, with = "serde_optional_u64")]
+    pub last_transaction_lt: Option<u64>,
 }
 
 impl Request for GetContractStateRequestRef<'_> {
