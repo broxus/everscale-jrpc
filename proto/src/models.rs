@@ -10,7 +10,9 @@ use prost::Message;
 use ton_types::UInt256;
 
 use crate::rpc;
-use crate::rpc::response::get_contract_state::contract_state;
+use crate::rpc::response::get_contract_state::exists::{Exact, Inexact, LastTransactionId};
+use crate::rpc::response::get_contract_state::not_exist::GenTimings;
+use crate::rpc::response::get_contract_state::{NotExist, Timings};
 
 pub struct Protobuf<T>(pub T);
 
@@ -90,56 +92,89 @@ impl IntoResponse for ProtoAnswer {
     }
 }
 
-impl From<contract_state::GenTimings> for nekoton_abi::GenTimings {
-    fn from(t: contract_state::GenTimings) -> Self {
+impl From<GenTimings> for nekoton_abi::GenTimings {
+    fn from(t: GenTimings) -> Self {
         match t {
-            contract_state::GenTimings::Known(known) => Self::Known {
+            GenTimings::Known(known) => Self::Known {
                 gen_lt: known.gen_lt,
                 gen_utime: known.gen_utime,
             },
-            contract_state::GenTimings::Unknown(()) => Self::Unknown,
+            GenTimings::Unknown(()) => Self::Unknown,
         }
     }
 }
 
-impl From<nekoton_abi::GenTimings> for contract_state::GenTimings {
+impl From<nekoton_abi::GenTimings> for GenTimings {
     fn from(t: nekoton_abi::GenTimings) -> Self {
         match t {
             nekoton_abi::GenTimings::Known { gen_lt, gen_utime } => {
-                contract_state::GenTimings::Known(contract_state::Known { gen_lt, gen_utime })
+                GenTimings::Known(Timings { gen_lt, gen_utime })
             }
-            nekoton_abi::GenTimings::Unknown => contract_state::GenTimings::Unknown(()),
+            nekoton_abi::GenTimings::Unknown => GenTimings::Unknown(()),
         }
     }
 }
 
-impl From<contract_state::LastTransactionId> for nekoton_abi::LastTransactionId {
-    fn from(t: contract_state::LastTransactionId) -> Self {
+impl From<nekoton_abi::GenTimings> for NotExist {
+    fn from(t: nekoton_abi::GenTimings) -> Self {
+        let get_timings = match t {
+            nekoton_abi::GenTimings::Known { gen_lt, gen_utime } => {
+                GenTimings::Known(Timings { gen_lt, gen_utime })
+            }
+            nekoton_abi::GenTimings::Unknown => GenTimings::Unknown(()),
+        };
+
+        Self {
+            gen_timings: Some(get_timings),
+        }
+    }
+}
+
+impl From<Timings> for NotExist {
+    fn from(t: Timings) -> Self {
+        Self {
+            gen_timings: Some(GenTimings::Known(Timings {
+                gen_lt: t.gen_lt,
+                gen_utime: t.gen_utime,
+            })),
+        }
+    }
+}
+
+impl From<Timings> for nekoton_abi::GenTimings {
+    fn from(t: Timings) -> Self {
+        Self::Known {
+            gen_lt: t.gen_lt,
+            gen_utime: t.gen_utime,
+        }
+    }
+}
+
+impl From<LastTransactionId> for nekoton_abi::LastTransactionId {
+    fn from(t: LastTransactionId) -> Self {
         match t {
-            contract_state::LastTransactionId::Exact(contract_state::Exact { lt, hash }) => {
+            LastTransactionId::Exact(Exact { lt, hash }) => {
                 Self::Exact(nekoton_abi::TransactionId {
                     lt,
                     hash: UInt256::from_slice(hash.as_ref()),
                 })
             }
-            contract_state::LastTransactionId::Inexact(contract_state::Inexact { latest_lt }) => {
-                Self::Inexact { latest_lt }
-            }
+            LastTransactionId::Inexact(Inexact { latest_lt }) => Self::Inexact { latest_lt },
         }
     }
 }
 
-impl From<nekoton_abi::LastTransactionId> for contract_state::LastTransactionId {
+impl From<nekoton_abi::LastTransactionId> for LastTransactionId {
     fn from(t: nekoton_abi::LastTransactionId) -> Self {
         match t {
             nekoton_abi::LastTransactionId::Exact(nekoton_abi::TransactionId { lt, hash }) => {
-                Self::Exact(contract_state::Exact {
+                Self::Exact(Exact {
                     lt,
                     hash: Bytes::from(hash.into_vec()),
                 })
             }
             nekoton_abi::LastTransactionId::Inexact { latest_lt } => {
-                Self::Inexact(contract_state::Inexact { latest_lt })
+                Self::Inexact(Inexact { latest_lt })
             }
         }
     }

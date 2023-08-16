@@ -95,8 +95,12 @@ where
     async fn get_contract_state(
         &self,
         address: &MsgAddressInt,
+        last_transaction_lt: Option<u64>,
     ) -> Result<Option<ExistingContract>> {
-        let params = &jrpc::GetContractStateRequestRef { address };
+        let params = &jrpc::GetContractStateRequestRef {
+            address,
+            last_transaction_lt,
+        };
         let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
             method: "getContractState",
             params,
@@ -127,7 +131,10 @@ where
         address: &MsgAddressInt,
         time: u32,
     ) -> Result<Option<ExistingContract>, RunError> {
-        let params = &jrpc::GetContractStateRequestRef { address };
+        let params = &jrpc::GetContractStateRequestRef {
+            address,
+            last_transaction_lt: None,
+        };
 
         let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
             method: "getContractState",

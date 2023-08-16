@@ -1,12 +1,14 @@
 syntax = "proto3";
 
 import "google/protobuf/empty.proto";
+import "google/protobuf/struct.proto";
 
 package rpc;
 
 message Request {
   message GetContractState {
     bytes address = 1;
+    optional uint64 last_transaction_lt = 2;
   }
 
   message GetTransaction {
@@ -64,7 +66,7 @@ message Response {
     uint32  last_mc_utime                     = 3;
     int64   mc_time_diff                      = 4;
     int64   shard_client_time_diff            = 5;
-    uint64 smallest_known_lt                  = 6;
+    uint64  smallest_known_lt                 = 6;
   }
 
   message GetStatus {
@@ -89,12 +91,19 @@ message Response {
   }
 
   message GetContractState {
-    message ContractState {
-      message Known {
-        uint64  gen_lt     = 1;
-        uint32  gen_utime  = 2;
-      }
+    message Timings {
+      uint64  gen_lt     = 1;
+      uint32  gen_utime  = 2;
+    }
 
+    message NotExist {
+      oneof GenTimings {
+        Timings               known   = 2;
+        google.protobuf.Empty unknown = 3;
+      }
+    }
+
+    message Exists {
       message Exact {
         uint64  lt    = 1;
         bytes   hash  = 2;
@@ -105,19 +114,19 @@ message Response {
       }
 
       bytes account = 1;
-
-      oneof GenTimings {
-        Known                 known   = 2;
-        google.protobuf.Empty unknown = 3;
-      }
+      Timings gen_timings = 2;
 
       oneof LastTransactionId {
-        Exact   exact   = 4;
-        Inexact inexact = 5;
+        Exact   exact   = 3;
+        Inexact inexact = 4;
       }
     }
 
-    ContractState contract_state = 1;
+    oneof State {
+      NotExist  not_exists  = 1;
+      Exists    exists      = 2;
+      Timings   unchanged   = 3;
+    }
   }
 
   oneof Result {

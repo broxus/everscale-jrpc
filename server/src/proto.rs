@@ -274,11 +274,28 @@ impl ProtoServer {
         })?;
 
         let state = match self.state.runtime_storage.get_contract_state(&account) {
-            Ok(ShardAccountFromCache::Found(state)) => state,
-            // TODO: add timings
-            Ok(ShardAccountFromCache::NotFound(..)) => {
+            Ok(ShardAccountFromCache::Found(state))
+                if Some(state.last_transaction_id.lt()) <= req.last_transaction_lt =>
+            {
                 return Ok(rpc::response::Result::GetContractState(
-                    rpc::response::GetContractState::default(),
+                    rpc::response::GetContractState {
+                        state: Some(rpc::response::get_contract_state::State::Unchanged(
+                            rpc::response::get_contract_state::Timings {
+                                gen_lt: state.last_transaction_id.lt(),
+                                gen_utime: state.gen_utime,
+                            },
+                        )),
+                    },
+                ))
+            }
+            Ok(ShardAccountFromCache::Found(state)) => state,
+            Ok(ShardAccountFromCache::NotFound(timings)) => {
+                return Ok(rpc::response::Result::GetContractState(
+                    rpc::response::GetContractState {
+                        state: Some(rpc::response::get_contract_state::State::NotExists(
+                            timings.into(),
+                        )),
+                    },
                 ))
             }
             Ok(ShardAccountFromCache::NotReady) => {
@@ -292,11 +309,20 @@ impl ProtoServer {
 
         let guard = state.state_handle;
 
+        let timings = rpc::response::get_contract_state::Timings {
+            gen_lt: state.last_transaction_id.lt(),
+            gen_utime: state.gen_utime,
+        };
+
         let account = match ton_block::Account::construct_from_cell(state.data) {
             Ok(ton_block::Account::Account(account)) => account,
             Ok(ton_block::Account::AccountNone) => {
                 return Ok(rpc::response::Result::GetContractState(
-                    rpc::response::GetContractState::default(),
+                    rpc::response::GetContractState {
+                        state: Some(rpc::response::get_contract_state::State::NotExists(
+                            timings.into(),
+                        )),
+                    },
                 ))
             }
             Err(e) => {
@@ -313,35 +339,30 @@ impl ProtoServer {
         // NOTE: state guard must be dropped after the serialization
         drop(guard);
 
-        let gen_timings = rpc::response::get_contract_state::contract_state::GenTimings::Known(
-            rpc::response::get_contract_state::contract_state::Known {
-                gen_lt: state.last_transaction_id.lt(),
-                gen_utime: state.gen_utime,
-            },
-        );
-
         let last_transaction_id = match state.last_transaction_id {
             LastTransactionId::Exact(transaction_id) => {
-                rpc::response::get_contract_state::contract_state::LastTransactionId::Exact(
-                    rpc::response::get_contract_state::contract_state::Exact {
+                rpc::response::get_contract_state::exists::LastTransactionId::Exact(
+                    rpc::response::get_contract_state::exists::Exact {
                         lt: transaction_id.lt,
                         hash: Bytes::copy_from_slice(transaction_id.hash.as_slice()),
                     },
                 )
             }
             LastTransactionId::Inexact { latest_lt } => {
-                rpc::response::get_contract_state::contract_state::LastTransactionId::Inexact(
-                    rpc::response::get_contract_state::contract_state::Inexact { latest_lt },
+                rpc::response::get_contract_state::exists::LastTransactionId::Inexact(
+                    rpc::response::get_contract_state::exists::Inexact { latest_lt },
                 )
             }
         };
 
         let result = rpc::response::Result::GetContractState(rpc::response::GetContractState {
-            contract_state: Some(rpc::response::get_contract_state::ContractState {
-                account,
-                gen_timings: Some(gen_timings),
-                last_transaction_id: Some(last_transaction_id),
-            }),
+            state: Some(rpc::response::get_contract_state::State::Exists(
+                rpc::response::get_contract_state::Exists {
+                    account,
+                    gen_timings: Some(timings),
+                    last_transaction_id: Some(last_transaction_id),
+                },
+            )),
         });
 
         Ok(result)
