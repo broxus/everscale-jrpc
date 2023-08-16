@@ -8,15 +8,14 @@ use anyhow::{Context, Result};
 use nekoton::transport::models::ExistingContract;
 use parking_lot::Mutex;
 use reqwest::StatusCode;
-use ton_block::{
-    CommonMsgInfo, Deserializable, MaybeDeserialize, MsgAddressInt, Serializable, Transaction,
-};
+use ton_block::{CommonMsgInfo, Deserializable, MsgAddressInt, Serializable, Transaction};
 use ton_types::UInt256;
 
 use everscale_rpc_models::Timings;
-use everscale_rpc_proto::models::Protobuf;
+use everscale_rpc_proto::models::ProtoAnswer;
 use everscale_rpc_proto::prost::{bytes, Message};
 use everscale_rpc_proto::rpc;
+use everscale_rpc_proto::utils;
 
 use crate::*;
 
@@ -110,7 +109,7 @@ where
         &self,
         address: &MsgAddressInt,
     ) -> Result<Option<ExistingContract>> {
-        let address = address_to_bytes(address);
+        let address = utils::addr_to_bytes(address);
 
         let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
             call: Some(rpc::request::Call::GetContractState(
@@ -128,7 +127,7 @@ where
         match result {
             rpc::response::Result::GetContractState(state) => match state.contract_state {
                 Some(state) => {
-                    let account = deserialize_account_stuff(&state.account)?;
+                    let account = utils::deserialize_account_stuff(&state.account)?;
 
                     let timings = state
                         .gen_timings
@@ -160,7 +159,7 @@ where
         address: &MsgAddressInt,
         time: u32,
     ) -> Result<Option<ExistingContract>, RunError> {
-        let address = address_to_bytes(address);
+        let address = utils::addr_to_bytes(address);
 
         let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
             call: Some(rpc::request::Call::GetContractState(
@@ -174,7 +173,7 @@ where
         match response.result.result {
             Some(rpc::response::Result::GetContractState(state)) => match state.contract_state {
                 Some(state) => {
-                    let account = deserialize_account_stuff(&state.account)?;
+                    let account = utils::deserialize_account_stuff(&state.account)?;
 
                     let timings = state
                         .gen_timings
@@ -223,7 +222,7 @@ impl<T: Connection + Ord + Clone + 'static> ProtoClientImpl<T> {
         account: &MsgAddressInt,
         last_transaction_lt: Option<u64>,
     ) -> Result<Vec<Transaction>> {
-        let account = address_to_bytes(account);
+        let account = utils::addr_to_bytes(account);
 
         let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
             call: Some(rpc::request::Call::GetTransactionsList(
@@ -335,34 +334,6 @@ impl<T: Connection + Ord + Clone + 'static> ProtoClientImpl<T> {
 fn decode_raw_transaction(bytes: &bytes::Bytes) -> Result<Transaction> {
     let cell = ton_types::deserialize_tree_of_cells(&mut bytes.as_ref())?;
     Transaction::construct_from_cell(cell)
-}
-
-fn address_to_bytes(address: &MsgAddressInt) -> bytes::Bytes {
-    let mut bytes = Vec::with_capacity(33);
-    bytes.push(address.workchain_id() as u8);
-    bytes.extend(address.address().get_bytestring_on_stack(0).to_vec());
-
-    bytes::Bytes::from(bytes)
-}
-
-fn deserialize_account_stuff(bytes: &bytes::Bytes) -> Result<ton_block::AccountStuff> {
-    ton_types::deserialize_tree_of_cells(&mut bytes.as_ref()).and_then(|cell| {
-        let slice = &mut ton_types::SliceData::load_cell(cell)?;
-        Ok(ton_block::AccountStuff {
-            addr: Deserializable::construct_from(slice)?,
-            storage_stat: Deserializable::construct_from(slice)?,
-            storage: ton_block::AccountStorage {
-                last_trans_lt: Deserializable::construct_from(slice)?,
-                balance: Deserializable::construct_from(slice)?,
-                state: Deserializable::construct_from(slice)?,
-                init_code_hash: if slice.remaining_bits() > 0 {
-                    UInt256::read_maybe_from(slice)?
-                } else {
-                    None
-                },
-            },
-        })
-    })
 }
 
 #[derive(Clone, Debug)]
@@ -551,36 +522,5 @@ impl Connection for ProtoConnection {
         };
 
         Ok(res)
-    }
-}
-
-pub enum ProtoAnswer {
-    Result(rpc::Response),
-    Error(rpc::Error),
-}
-
-impl ProtoAnswer {
-    pub async fn parse_response(response: reqwest::Response) -> Result<Self> {
-        let res = match response.status() {
-            StatusCode::OK => Self::Result(rpc::Response::decode(response.bytes().await?)?),
-            _ => Self::Error(rpc::Error::decode(response.bytes().await?)?),
-        };
-
-        Ok(res)
-    }
-
-    pub fn success(result: rpc::response::Result) -> Self {
-        Self::Result(rpc::Response {
-            result: Some(result),
-        })
-    }
-}
-
-impl axum_core::response::IntoResponse for ProtoAnswer {
-    fn into_response(self) -> axum_core::response::Response {
-        match self {
-            Self::Result(res) => Protobuf(res).into_response(),
-            Self::Error(e) => Protobuf(e).into_response(),
-        }
     }
 }
