@@ -103,7 +103,7 @@ where
         });
 
         match self.request(&request).await?.into_inner() {
-            jrpc::GetContractStateResponse::NotExists => Ok(None),
+            jrpc::GetContractStateResponse::NotExists { .. } => Ok(None),
             jrpc::GetContractStateResponse::Exists {
                 account,
                 timings,
@@ -136,8 +136,16 @@ where
 
         let response = self.request(&request).await?;
         match response.result {
-            jrpc::GetContractStateResponse::NotExists => {
-                response.has_state_for(time)?;
+            jrpc::GetContractStateResponse::NotExists { timings } => {
+                match timings {
+                    nekoton_abi::GenTimings::Known { gen_utime, .. } => {
+                        if gen_utime < time {
+                            return Err(RunError::NoStateForTimeStamp(time));
+                        }
+                    }
+                    nekoton_abi::GenTimings::Unknown => response.has_state_for(time)?,
+                }
+
                 Ok(None)
             }
             jrpc::GetContractStateResponse::Exists {

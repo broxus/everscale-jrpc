@@ -272,7 +272,8 @@ impl ProtoServer {
 
         let state = match self.state.runtime_storage.get_contract_state(&account) {
             Ok(ShardAccountFromCache::Found(state)) => state,
-            Ok(ShardAccountFromCache::NotFound) => {
+            // TODO: add timings
+            Ok(ShardAccountFromCache::NotFound(..)) => {
                 return Ok(rpc::response::Result::GetContractState(
                     rpc::response::GetContractState::default(),
                 ))
