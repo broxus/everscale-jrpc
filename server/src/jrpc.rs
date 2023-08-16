@@ -271,9 +271,10 @@ impl JrpcServer {
                 );
             }
             Ok(ShardAccountFromCache::Found(state)) => state,
-            Ok(ShardAccountFromCache::NotFound) => {
+            Ok(ShardAccountFromCache::NotFound(timings)) => {
                 return Ok(
-                    serde_json::to_value(jrpc::GetContractStateResponse::NotExists).unwrap(),
+                    serde_json::to_value(jrpc::GetContractStateResponse::NotExists { timings })
+                        .unwrap(),
                 );
             }
             Ok(ShardAccountFromCache::NotReady) => {
@@ -287,10 +288,18 @@ impl JrpcServer {
 
         let guard = state.state_handle;
 
+        let timings = nekoton_abi::GenTimings::Known {
+            gen_lt: state.last_transaction_id.lt(),
+            gen_utime: state.gen_utime,
+        };
+
         let account = match ton_block::Account::construct_from_cell(state.data) {
             Ok(ton_block::Account::Account(account)) => account,
             Ok(ton_block::Account::AccountNone) => {
-                return Ok(serde_json::to_value(jrpc::GetContractStateResponse::NotExists).unwrap())
+                return Ok(
+                    serde_json::to_value(jrpc::GetContractStateResponse::NotExists { timings })
+                        .unwrap(),
+                )
             }
             Err(e) => {
                 tracing::error!("failed to deserialize account: {e:?}");
@@ -300,10 +309,7 @@ impl JrpcServer {
 
         let result = serde_json::to_value(jrpc::GetContractStateResponse::Exists {
             account,
-            timings: nekoton_abi::GenTimings::Known {
-                gen_lt: state.last_transaction_id.lt(),
-                gen_utime: state.gen_utime,
-            },
+            timings,
             last_transaction_id: state.last_transaction_id,
         });
 
