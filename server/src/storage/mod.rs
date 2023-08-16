@@ -114,39 +114,43 @@ impl RuntimeStorage {
             let state = self.masterchain_accounts_cache.read();
             match &*state {
                 None => ShardAccountFromCache::NotReady,
-                Some(accounts) => accounts
-                    .get(&account)?
-                    .map(ShardAccountFromCache::Found)
-                    .unwrap_or(ShardAccountFromCache::NotFound),
+                Some(accounts) => match accounts.get(&account)? {
+                    Some(state) => ShardAccountFromCache::Found(state),
+                    None => ShardAccountFromCache::NotFound(nekoton_abi::GenTimings::Known {
+                        gen_lt: 0,
+                        gen_utime: accounts.gen_utime,
+                    }),
+                },
             }
         } else {
             let cache = self.shard_accounts_cache.read();
             let mut state = Ok(None);
 
-            let mut has_account_shard = false;
+            let mut gen_utime = 0;
             for (shard_ident, shard_accounts) in cache.iter() {
                 if !contains_account(shard_ident, &account) {
                     continue;
                 }
 
-                has_account_shard = true;
+                gen_utime = shard_accounts.gen_utime;
                 state = shard_accounts.get(&account)
             }
 
-            if !has_account_shard {
-                return Ok(ShardAccountFromCache::NotReady);
+            match state? {
+                Some(state) => ShardAccountFromCache::Found(state),
+                None if gen_utime == 0 => ShardAccountFromCache::NotReady,
+                None => ShardAccountFromCache::NotFound(nekoton_abi::GenTimings::Known {
+                    gen_lt: 0,
+                    gen_utime,
+                }),
             }
-
-            state?
-                .map(ShardAccountFromCache::Found)
-                .unwrap_or(ShardAccountFromCache::NotFound)
         })
     }
 }
 
 pub enum ShardAccountFromCache {
     NotReady,
-    NotFound,
+    NotFound(nekoton_abi::GenTimings),
     Found(ShardAccount),
 }
 

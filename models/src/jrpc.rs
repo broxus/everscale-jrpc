@@ -39,7 +39,9 @@ impl Request for GetContractStateRequestRef<'_> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum GetContractStateResponse {
-    NotExists,
+    NotExists {
+        timings: nekoton_abi::GenTimings,
+    },
     #[serde(rename_all = "camelCase")]
     Exists {
         /// Base64 encoded account data
