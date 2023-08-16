@@ -108,12 +108,16 @@ where
     async fn get_contract_state(
         &self,
         address: &MsgAddressInt,
+        last_transaction_lt: Option<u64>,
     ) -> Result<Option<ExistingContract>> {
         let address = utils::addr_to_bytes(address);
 
         let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
             call: Some(rpc::request::Call::GetContractState(
-                rpc::request::GetContractState { address },
+                rpc::request::GetContractState {
+                    address,
+                    last_transaction_lt,
+                },
             )),
         });
 
@@ -125,8 +129,9 @@ where
             .ok_or::<RunError>(ClientError::InvalidResponse.into())?;
 
         match result {
-            rpc::response::Result::GetContractState(state) => match state.contract_state {
-                Some(state) => {
+            rpc::response::Result::GetContractState(state) => match state.state {
+                Some(rpc::response::get_contract_state::State::NotExists(_)) => Ok(None),
+                Some(rpc::response::get_contract_state::State::Exists(state)) => {
                     let account = utils::deserialize_account_stuff(&state.account)?;
 
                     let timings = state
@@ -145,7 +150,10 @@ where
                         last_transaction_id,
                     }))
                 }
-                None => Ok(None),
+                Some(rpc::response::get_contract_state::State::Unchanged(_)) => {
+                    Err(anyhow::anyhow!("Contract state is unchanged"))
+                }
+                None => Err(ClientError::InvalidResponse.into()),
             },
             _ => Err(ClientError::InvalidResponse.into()),
         }
@@ -163,16 +171,43 @@ where
 
         let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
             call: Some(rpc::request::Call::GetContractState(
-                rpc::request::GetContractState { address },
+                rpc::request::GetContractState {
+                    address,
+                    last_transaction_lt: None,
+                },
             )),
         });
 
         let response = self.request(&request).await?;
         let has_state_for = response.has_state_for(time);
 
-        match response.result.result {
-            Some(rpc::response::Result::GetContractState(state)) => match state.contract_state {
-                Some(state) => {
+        match response
+            .into_inner()
+            .result
+            .ok_or::<RunError>(ClientError::InvalidResponse.into())?
+        {
+            rpc::response::Result::GetContractState(state) => match state.state {
+                Some(rpc::response::get_contract_state::State::NotExists(
+                    rpc::response::get_contract_state::NotExist {
+                        gen_timings: Some(timings),
+                    },
+                )) => {
+                    match timings {
+                        rpc::response::get_contract_state::not_exist::GenTimings::Known(
+                            rpc::response::get_contract_state::Timings { gen_utime, .. },
+                        ) => {
+                            if gen_utime < time {
+                                return Err(RunError::NoStateForTimeStamp(time));
+                            }
+                        }
+                        rpc::response::get_contract_state::not_exist::GenTimings::Unknown(()) => {
+                            has_state_for?
+                        }
+                    }
+
+                    Ok(None)
+                }
+                Some(rpc::response::get_contract_state::State::Exists(state)) => {
                     let account = utils::deserialize_account_stuff(&state.account)?;
 
                     let timings = state
@@ -191,10 +226,10 @@ where
                         last_transaction_id,
                     }))
                 }
-                None => {
-                    has_state_for?;
-                    Ok(None)
-                }
+                Some(rpc::response::get_contract_state::State::Unchanged(_)) => Err(
+                    RunError::Generic(anyhow::anyhow!("Contract state is unchanged")),
+                ),
+                _ => Err(ClientError::InvalidResponse.into()),
             },
             _ => Err(ClientError::InvalidResponse.into()),
         }
