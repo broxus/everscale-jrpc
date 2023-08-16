@@ -973,11 +973,16 @@ dependencies = [
 name = "everscale-rpc-proto"
 version = "0.1.0"
 dependencies = [
- "axum",
- "bytes",
+ "anyhow",
+ "async-trait",
+ "axum-core",
+ "http",
+ "http-body",
  "nekoton-abi",
  "prost",
  "prost-build",
+ "reqwest",
+ "ton_block",
  "ton_types",
  "tracing",
 ]
