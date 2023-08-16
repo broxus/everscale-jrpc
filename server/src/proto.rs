@@ -12,11 +12,11 @@ use everscale_rpc_proto::models::Protobuf;
 use everscale_rpc_proto::rpc;
 use nekoton_abi::LastTransactionId;
 use serde::Serialize;
-use ton_block::{Deserializable, MsgAddressInt, Serializable};
+use ton_block::{Deserializable, Serializable};
 
 use crate::server::Server;
 use crate::storage::ShardAccountFromCache;
-use crate::utils::{self, QueryError, QueryResult};
+use crate::utils::{QueryError, QueryResult};
 use crate::{Counters, RpcState};
 
 pub struct ProtoServer {
@@ -268,7 +268,10 @@ impl ProtoServer {
         &self,
         req: rpc::request::GetContractState,
     ) -> QueryResult<rpc::response::Result> {
-        let account = parse_address(&req.address)?;
+        let account = everscale_rpc_proto::utils::bytes_to_addr(&req.address).map_err(|e| {
+            tracing::error!("failed to parse address: {e:?}");
+            QueryError::InvalidParams
+        })?;
 
         let state = match self.state.runtime_storage.get_contract_state(&account) {
             Ok(ShardAccountFromCache::Found(state)) => state,
@@ -373,9 +376,7 @@ impl ProtoServer {
         let mut key = [0u8; { tables::CodeHashes::KEY_LEN }];
         key[0..32].copy_from_slice(&req.code_hash);
         if let Some(continuation) = &req.continuation {
-            let address = parse_address(continuation)?;
-            utils::extract_address(&address, &mut key[32..])
-                .map_err(|_| QueryError::InvalidParams)?;
+            key[32..].copy_from_slice(continuation);
         }
 
         let mut upper_bound = Vec::with_capacity(tables::CodeHashes::KEY_LEN);
@@ -476,8 +477,7 @@ impl ProtoServer {
         };
 
         let mut key = [0u8; { crate::storage::tables::Transactions::KEY_LEN }];
-        let address = parse_address(&req.account)?;
-        utils::extract_address(&address, &mut key).map_err(|_| QueryError::InvalidParams)?;
+        key[0..].copy_from_slice(&req.account);
         key[33..].copy_from_slice(&req.last_transaction_lt.unwrap_or(u64::MAX).to_be_bytes());
 
         let mut lower_bound = Vec::with_capacity(tables::Transactions::KEY_LEN);
@@ -590,24 +590,6 @@ impl ProtoServer {
             }
         }
     }
-}
-
-fn parse_address(bytes: &Bytes) -> QueryResult<MsgAddressInt> {
-    if bytes.len() == 33 {
-        let workchain_id = bytes[0] as i8;
-        let address =
-            ton_types::AccountId::from(<[u8; 32]>::try_from(&bytes[1..33]).map_err(|e| {
-                tracing::error!("failed to parse account: {e:?}");
-                QueryError::InvalidParams
-            })?);
-
-        return MsgAddressInt::with_standart(None, workchain_id, address).map_err(|e| {
-            tracing::error!("failed to construct account: {e:?}");
-            QueryError::InvalidParams
-        });
-    }
-
-    Err(QueryError::InvalidParams)
 }
 
 pub struct ProtoError<'a> {
