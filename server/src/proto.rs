@@ -8,7 +8,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use bytes::Bytes;
-use everscale_rpc_proto::models::Protobuf;
+use everscale_rpc_models::proto::Protobuf;
 use everscale_rpc_proto::rpc;
 use nekoton_abi::LastTransactionId;
 use serde::Serialize;
