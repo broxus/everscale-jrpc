@@ -944,7 +944,6 @@ dependencies = [
  "http-body",
  "nekoton-abi",
  "nekoton-utils",
- "reqwest",
  "serde",
  "ton_block",
  "tracing",
