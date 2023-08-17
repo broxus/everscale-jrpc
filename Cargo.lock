@@ -936,11 +936,18 @@ dependencies = [
 name = "everscale-rpc-models"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum-core",
  "everscale-rpc-proto",
+ "http",
+ "http-body",
  "nekoton-abi",
  "nekoton-utils",
+ "reqwest",
  "serde",
  "ton_block",
+ "tracing",
 ]
 
 [[package]]
@@ -974,17 +981,11 @@ name = "everscale-rpc-proto"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
- "axum-core",
- "http",
- "http-body",
  "nekoton-abi",
  "prost",
  "prost-build",
- "reqwest",
  "ton_block",
  "ton_types",
- "tracing",
 ]
 
 [[package]]
