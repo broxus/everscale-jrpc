@@ -3,6 +3,7 @@ use std::time::SystemTime;
 use nekoton_utils::*;
 
 pub mod jrpc;
+pub mod proto;
 
 pub const MC_ACCEPTABLE_TIME_DIFF: u64 = 120;
 pub const SC_ACCEPTABLE_TIME_DIFF: u64 = 120;

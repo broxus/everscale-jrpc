@@ -11,8 +11,8 @@ use reqwest::StatusCode;
 use ton_block::{CommonMsgInfo, Deserializable, MsgAddressInt, Serializable, Transaction};
 use ton_types::UInt256;
 
+use everscale_rpc_models::proto::ProtoAnswer;
 use everscale_rpc_models::Timings;
-use everscale_rpc_proto::models::ProtoAnswer;
 use everscale_rpc_proto::prost::{bytes, Message};
 use everscale_rpc_proto::rpc;
 use everscale_rpc_proto::utils;
