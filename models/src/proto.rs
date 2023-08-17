@@ -62,12 +62,13 @@ pub enum ProtoAnswer {
 }
 
 impl ProtoAnswer {
-    pub async fn parse_response(response: reqwest::Response) -> Result<Self> {
-        let res = match response.status() {
-            StatusCode::OK => Self::Result(rpc::Response::decode(response.bytes().await?)?),
-            _ => Self::Error(rpc::Error::decode(response.bytes().await?)?),
-        };
+    pub fn decode_success(response: Bytes) -> Result<Self> {
+        let res = Self::Result(rpc::Response::decode(response)?);
+        Ok(res)
+    }
 
+    pub fn decode_error(response: Bytes) -> Result<Self> {
+        let res = Self::Result(rpc::Response::decode(response)?);
         Ok(res)
     }
 

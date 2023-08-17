@@ -320,7 +320,7 @@ impl<T: Connection + Ord + Clone + 'static> ProtoClientImpl<T> {
                 .ok_or::<RunError>(ClientError::NoEndpointsAvailable.into())?;
 
             let response = match client.request(request).await {
-                Ok(res) => ProtoAnswer::parse_response(res).await,
+                Ok(res) => parse_response(res).await,
                 Err(e) => Err(e.into()),
             };
 
@@ -454,7 +454,7 @@ impl Connection for ProtoConnection {
         });
 
         let response = match self.request(&request).await {
-            Ok(res) => ProtoAnswer::parse_response(res).await,
+            Ok(res) => parse_response(res).await,
             Err(e) => Err(e.into()),
         };
 
@@ -503,7 +503,7 @@ impl Connection for ProtoConnection {
         });
 
         let response = match self.request(&request).await {
-            Ok(res) => ProtoAnswer::parse_response(res).await,
+            Ok(res) => parse_response(res).await,
             Err(e) => Err(e.into()),
         };
 
@@ -538,10 +538,7 @@ impl Connection for ProtoConnection {
             .body(body.encode_to_vec());
 
         let response = req.send().await?;
-        let result = match response.status() {
-            StatusCode::OK => ProtoAnswer::Result(rpc::Response::decode(response.bytes().await?)?),
-            _ => ProtoAnswer::Error(rpc::Error::decode(response.bytes().await?)?),
-        };
+        let result = parse_response(response).await?;
 
         let res = match result {
             ProtoAnswer::Result(_) => true,
@@ -557,5 +554,12 @@ impl Connection for ProtoConnection {
         };
 
         Ok(res)
+    }
+}
+
+async fn parse_response(res: reqwest::Response) -> anyhow::Result<ProtoAnswer> {
+    match res.status() {
+        StatusCode::OK => ProtoAnswer::decode_success(res.bytes().await?),
+        _ => ProtoAnswer::decode_error(res.bytes().await?),
     }
 }
