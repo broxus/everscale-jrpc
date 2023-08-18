@@ -9,11 +9,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use everscale_rpc_proto::prost::Message;
-use everscale_rpc_proto::rpc;
 use futures::StreamExt;
 use itertools::Itertools;
 use nekoton::transport::models::ExistingContract;
+use nekoton_proto::prost::Message;
+use nekoton_proto::rpc;
 use nekoton_utils::SimpleClock;
 use parking_lot::RwLock;
 use reqwest::header::CONTENT_TYPE;

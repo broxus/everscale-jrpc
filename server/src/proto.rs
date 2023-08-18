@@ -9,8 +9,8 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use bytes::Bytes;
 use everscale_rpc_models::proto::Protobuf;
-use everscale_rpc_proto::rpc;
 use nekoton_abi::LastTransactionId;
+use nekoton_proto::rpc;
 use serde::Serialize;
 use ton_block::{Deserializable, Serializable};
 
@@ -268,7 +268,7 @@ impl ProtoServer {
         &self,
         req: rpc::request::GetContractState,
     ) -> QueryResult<rpc::response::Result> {
-        let account = everscale_rpc_proto::utils::bytes_to_addr(&req.address).map_err(|e| {
+        let account = nekoton_proto::utils::bytes_to_addr(&req.address).map_err(|e| {
             tracing::error!("failed to parse address: {e:?}");
             QueryError::InvalidParams
         })?;

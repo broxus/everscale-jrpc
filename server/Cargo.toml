@@ -26,14 +26,14 @@ tower-http = { version = "0.4.0", features = ["cors", "timeout"] }
 tracing = "0.1.37"
 weedb = { version = "0.1", features = ["zstd", "lz4", "jemalloc"] }
 
-nekoton-abi = { git = "https://github.com/broxus/nekoton.git", default-features = false }
+nekoton-abi = { git = "https://github.com/broxus/nekoton.git",  branch = "feature/protobuf", default-features = false }
+nekoton-proto = { git = "https://github.com/broxus/nekoton.git", branch = "feature/protobuf", default-features = false }
 
 ton-indexer = { git = "https://github.com/broxus/ton-indexer.git" }
 ton_block = { git = "https://github.com/broxus/ton-labs-block.git" }
 ton_types = { git = "https://github.com/broxus/ton-labs-types.git" }
 
 everscale-rpc-models = { path = "../models" }
-everscale-rpc-proto = { path = "../proto" }
 
 [dev-dependencies]
 hex = "0.4"
