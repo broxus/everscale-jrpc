@@ -909,12 +909,12 @@ dependencies = [
  "base64 0.13.1",
  "ed25519-dalek 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "everscale-rpc-models",
- "everscale-rpc-proto",
  "futures",
  "hex",
  "itertools 0.11.0",
  "nekoton",
  "nekoton-abi",
+ "nekoton-proto",
  "nekoton-utils",
  "parking_lot",
  "rand 0.8.5",
@@ -939,10 +939,10 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum-core",
- "everscale-rpc-proto",
  "http",
  "http-body",
  "nekoton-abi",
+ "nekoton-proto",
  "nekoton-utils",
  "serde",
  "ton_block",
@@ -976,18 +976,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "everscale-rpc-proto"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "nekoton-abi",
- "prost",
- "prost-build",
- "ton_block",
- "ton_types",
-]
-
-[[package]]
 name = "everscale-rpc-server"
 version = "0.2.2"
 dependencies = [
@@ -999,11 +987,11 @@ dependencies = [
  "base64 0.13.1",
  "bytes",
  "everscale-rpc-models",
- "everscale-rpc-proto",
  "fdlimit",
  "hex",
  "humantime",
  "nekoton-abi",
+ "nekoton-proto",
  "num_cpus",
  "parking_lot",
  "rlimit",
@@ -1867,7 +1855,7 @@ dependencies = [
 [[package]]
 name = "nekoton"
 version = "0.13.1"
-source = "git+https://github.com/broxus/nekoton.git#20945ffb8315dc44959efbd001b13a32bd2dbc73"
+source = "git+https://github.com/broxus/nekoton.git?branch=feature/protobuf#6e497477684897e08dca8cd4f064f5b1ea617039"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1890,6 +1878,7 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "pbkdf2",
+ "quick_cache",
  "rand 0.8.5",
  "secstr",
  "serde",
@@ -1909,7 +1898,7 @@ dependencies = [
 [[package]]
 name = "nekoton-abi"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git#20945ffb8315dc44959efbd001b13a32bd2dbc73"
+source = "git+https://github.com/broxus/nekoton.git?branch=feature/protobuf#6e497477684897e08dca8cd4f064f5b1ea617039"
 dependencies = [
  "anyhow",
  "base64 0.13.1",
@@ -1936,7 +1925,7 @@ dependencies = [
 [[package]]
 name = "nekoton-contracts"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git#20945ffb8315dc44959efbd001b13a32bd2dbc73"
+source = "git+https://github.com/broxus/nekoton.git?branch=feature/protobuf#6e497477684897e08dca8cd4f064f5b1ea617039"
 dependencies = [
  "anyhow",
  "nekoton-abi",
@@ -1950,7 +1939,7 @@ dependencies = [
 [[package]]
 name = "nekoton-derive"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git#20945ffb8315dc44959efbd001b13a32bd2dbc73"
+source = "git+https://github.com/broxus/nekoton.git?branch=feature/protobuf#6e497477684897e08dca8cd4f064f5b1ea617039"
 dependencies = [
  "either",
  "proc-macro2",
@@ -1959,9 +1948,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "nekoton-proto"
+version = "0.1.0"
+source = "git+https://github.com/broxus/nekoton.git?branch=feature/protobuf#6e497477684897e08dca8cd4f064f5b1ea617039"
+dependencies = [
+ "anyhow",
+ "nekoton-abi",
+ "prost",
+ "prost-build",
+ "ton_block",
+ "ton_types",
+]
+
+[[package]]
 name = "nekoton-utils"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git#20945ffb8315dc44959efbd001b13a32bd2dbc73"
+source = "git+https://github.com/broxus/nekoton.git?branch=feature/protobuf#6e497477684897e08dca8cd4f064f5b1ea617039"
 dependencies = [
  "anyhow",
  "base64 0.13.1",

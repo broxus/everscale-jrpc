@@ -2,12 +2,12 @@ use anyhow::Result;
 use axum_core::extract::FromRequest;
 use axum_core::response::{IntoResponse, Response};
 use axum_core::{body, BoxError};
-use everscale_rpc_proto::prost::bytes::Bytes;
-use everscale_rpc_proto::prost::Message;
-use everscale_rpc_proto::rpc;
 use http::header::CONTENT_TYPE;
 use http::{HeaderValue, Request, StatusCode};
 use http_body::{Body, Full};
+use nekoton_proto::prost::bytes::Bytes;
+use nekoton_proto::prost::Message;
+use nekoton_proto::rpc;
 
 pub struct Protobuf<T>(pub T);
 
