@@ -54,6 +54,15 @@ impl From<Timings> for NotExist {
     }
 }
 
+impl From<nekoton_abi::GenTimings> for Timings {
+    fn from(t: nekoton_abi::GenTimings) -> Self {
+        match t {
+            nekoton_abi::GenTimings::Known { gen_lt, gen_utime } => Self { gen_lt, gen_utime },
+            nekoton_abi::GenTimings::Unknown => Self::default(), // unreachable since everscale-rpc-server must set timings
+        }
+    }
+}
+
 impl From<Timings> for nekoton_abi::GenTimings {
     fn from(t: Timings) -> Self {
         Self::Known {

@@ -12,8 +12,9 @@ http-body = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 tracing = "0.1.37"
 
+ton_block = { git = "https://github.com/broxus/ton-labs-block.git" }
+
 nekoton-abi = { git = "https://github.com/broxus/nekoton.git", default-features = false }
 nekoton-utils = { git = "https://github.com/broxus/nekoton.git", default-features = false }
-ton_block = { git = "https://github.com/broxus/ton-labs-block.git" }
 
 everscale-rpc-proto = { path = "../proto" }
