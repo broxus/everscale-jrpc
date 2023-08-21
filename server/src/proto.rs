@@ -395,9 +395,16 @@ impl ProtoServer {
         };
 
         let mut key = [0u8; { tables::CodeHashes::KEY_LEN }];
+        if req.code_hash.len() != 32 {
+            return Err(QueryError::InvalidParams);
+        }
         key[0..32].copy_from_slice(&req.code_hash);
+
         if let Some(continuation) = &req.continuation {
-            key[32..].copy_from_slice(continuation);
+            if continuation.len() != 33 {
+                return Err(QueryError::InvalidParams);
+            }
+            key[32..65].copy_from_slice(continuation);
         }
 
         let mut upper_bound = Vec::with_capacity(tables::CodeHashes::KEY_LEN);
@@ -498,7 +505,10 @@ impl ProtoServer {
         };
 
         let mut key = [0u8; { crate::storage::tables::Transactions::KEY_LEN }];
-        key[0..].copy_from_slice(&req.account);
+        if req.account.len() != 33 {
+            return Err(QueryError::InvalidParams);
+        }
+        key[0..33].copy_from_slice(&req.account);
         key[33..].copy_from_slice(&req.last_transaction_lt.unwrap_or(u64::MAX).to_be_bytes());
 
         let mut lower_bound = Vec::with_capacity(tables::Transactions::KEY_LEN);
