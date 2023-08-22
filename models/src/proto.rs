@@ -68,7 +68,7 @@ impl ProtoAnswer {
     }
 
     pub fn decode_error(response: Bytes) -> Result<Self> {
-        let res = Self::Result(rpc::Response::decode(response)?);
+        let res = Self::Error(rpc::Error::decode(response)?);
         Ok(res)
     }
 
