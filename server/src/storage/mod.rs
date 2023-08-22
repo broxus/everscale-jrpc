@@ -465,7 +465,7 @@ impl PersistentStorage {
             .map(|shard_state| shard_state.state().read_accounts())
             .transpose()?;
 
-        // 
+        //
 
         // Prepare column families
         let mut write_batch = rocksdb::WriteBatch::default();
