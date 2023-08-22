@@ -1855,7 +1855,7 @@ dependencies = [
 [[package]]
 name = "nekoton"
 version = "0.13.1"
-source = "git+https://github.com/broxus/nekoton.git?branch=feature/protobuf#fe0b6a8e9692e01d1cb06094ec8bce52a09513bc"
+source = "git+https://github.com/broxus/nekoton.git#9acf2d50be8732c2e2326188c91f531258d8e069"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1898,7 +1898,7 @@ dependencies = [
 [[package]]
 name = "nekoton-abi"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git?branch=feature/protobuf#fe0b6a8e9692e01d1cb06094ec8bce52a09513bc"
+source = "git+https://github.com/broxus/nekoton.git#9acf2d50be8732c2e2326188c91f531258d8e069"
 dependencies = [
  "anyhow",
  "base64 0.13.1",
@@ -1925,7 +1925,7 @@ dependencies = [
 [[package]]
 name = "nekoton-contracts"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git?branch=feature/protobuf#fe0b6a8e9692e01d1cb06094ec8bce52a09513bc"
+source = "git+https://github.com/broxus/nekoton.git#9acf2d50be8732c2e2326188c91f531258d8e069"
 dependencies = [
  "anyhow",
  "nekoton-abi",
@@ -1939,7 +1939,7 @@ dependencies = [
 [[package]]
 name = "nekoton-derive"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git?branch=feature/protobuf#fe0b6a8e9692e01d1cb06094ec8bce52a09513bc"
+source = "git+https://github.com/broxus/nekoton.git#9acf2d50be8732c2e2326188c91f531258d8e069"
 dependencies = [
  "either",
  "proc-macro2",
@@ -1950,7 +1950,7 @@ dependencies = [
 [[package]]
 name = "nekoton-proto"
 version = "0.1.0"
-source = "git+https://github.com/broxus/nekoton.git?branch=feature/protobuf#fe0b6a8e9692e01d1cb06094ec8bce52a09513bc"
+source = "git+https://github.com/broxus/nekoton.git#9acf2d50be8732c2e2326188c91f531258d8e069"
 dependencies = [
  "anyhow",
  "nekoton-abi",
@@ -1963,7 +1963,7 @@ dependencies = [
 [[package]]
 name = "nekoton-utils"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git?branch=feature/protobuf#fe0b6a8e9692e01d1cb06094ec8bce52a09513bc"
+source = "git+https://github.com/broxus/nekoton.git#9acf2d50be8732c2e2326188c91f531258d8e069"
 dependencies = [
  "anyhow",
  "base64 0.13.1",
