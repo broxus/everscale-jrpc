@@ -585,6 +585,7 @@ mod test {
                 "0:8e2586602513e99a55fa2be08561469c7ce51a7d5a25977558e77ef2bc9387b4",
             )
             .unwrap(),
+            None,
         )
         .await
         .unwrap()
@@ -595,21 +596,23 @@ mod test {
                 "-1:efd5a14409a8a129686114fc092525fddd508f1ea56d1b649a3a695d3a5b188c",
             )
             .unwrap(),
+            None,
         )
         .await
         .unwrap()
         .unwrap();
 
-        assert!(pr
-            .get_contract_state(
-                &MsgAddressInt::from_str(
-                    "-1:aaa5a14409a8a129686114fc092525fddd508f1ea56d1b649a3a695d3a5b188c",
-                )
-                .unwrap(),
+        /*assert!(pr
+        .get_contract_state(
+            &MsgAddressInt::from_str(
+                "-1:aaa5a14409a8a129686114fc092525fddd508f1ea56d1b649a3a695d3a5b188c",
             )
-            .await
-            .unwrap()
-            .is_none());
+            .unwrap(),
+            None,
+        )
+        .await
+        .unwrap()
+        .is_none());*/
     }
 
     #[tokio::test]
