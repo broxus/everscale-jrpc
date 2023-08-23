@@ -7,7 +7,7 @@ use http::{HeaderValue, Request, StatusCode};
 use http_body::{Body, Full};
 use nekoton_proto::prost::bytes::Bytes;
 use nekoton_proto::prost::Message;
-use nekoton_proto::rpc;
+use nekoton_proto::protos::rpc;
 
 pub struct Protobuf<T>(pub T);
 
