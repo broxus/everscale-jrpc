@@ -10,7 +10,7 @@ use axum::response::IntoResponse;
 use bytes::Bytes;
 use everscale_rpc_models::proto::Protobuf;
 use nekoton_abi::LastTransactionId;
-use nekoton_proto::rpc;
+use nekoton_proto::protos::rpc;
 use serde::Serialize;
 use ton_block::{Deserializable, Serializable};
 

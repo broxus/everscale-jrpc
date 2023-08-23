@@ -13,7 +13,7 @@ use futures::StreamExt;
 use itertools::Itertools;
 use nekoton::transport::models::ExistingContract;
 use nekoton_proto::prost::Message;
-use nekoton_proto::rpc;
+use nekoton_proto::protos::rpc;
 use nekoton_utils::SimpleClock;
 use parking_lot::RwLock;
 use reqwest::header::CONTENT_TYPE;

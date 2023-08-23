@@ -14,7 +14,7 @@ use ton_types::UInt256;
 use everscale_rpc_models::proto::ProtoAnswer;
 use everscale_rpc_models::Timings;
 use nekoton_proto::prost::{bytes, Message};
-use nekoton_proto::rpc;
+use nekoton_proto::protos::rpc;
 use nekoton_proto::utils;
 
 use crate::*;

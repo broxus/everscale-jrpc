@@ -78,9 +78,9 @@ impl From<jrpc::GetTimingsResponse> for Timings {
     }
 }
 
-impl From<nekoton_proto::rpc::response::GetTimings> for Timings {
+impl From<nekoton_proto::protos::rpc::response::GetTimings> for Timings {
     #[inline]
-    fn from(t: nekoton_proto::rpc::response::GetTimings) -> Self {
+    fn from(t: nekoton_proto::protos::rpc::response::GetTimings) -> Self {
         Self {
             last_mc_block_seqno: t.last_mc_block_seqno,
             last_shard_client_mc_block_seqno: t.last_shard_client_mc_block_seqno,
