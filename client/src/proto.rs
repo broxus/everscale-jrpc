@@ -560,6 +560,7 @@ impl Connection for ProtoConnection {
 async fn parse_response(res: reqwest::Response) -> anyhow::Result<ProtoAnswer> {
     match res.status() {
         StatusCode::OK => ProtoAnswer::decode_success(res.bytes().await?),
-        _ => ProtoAnswer::decode_error(res.bytes().await?),
+        StatusCode::UNPROCESSABLE_ENTITY => ProtoAnswer::decode_error(res.bytes().await?),
+        _ => anyhow::bail!(res.status().to_string()),
     }
 }
