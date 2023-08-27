@@ -96,10 +96,9 @@ impl ProtoServer {
             let config_response = Arc::downgrade(&config_response);
             async move {
                 while key_block_rx.changed().await.is_ok() {
-                    let (Some(key_block_response), Some(config_response)) = (
-                        key_block_response.upgrade(),
-                        config_response.upgrade()
-                    ) else {
+                    let (Some(key_block_response), Some(config_response)) =
+                        (key_block_response.upgrade(), config_response.upgrade())
+                    else {
                         return;
                     };
 
@@ -429,7 +428,7 @@ impl ProtoServer {
         let mut result = Vec::with_capacity(std::cmp::min(8, limit) as usize);
 
         for _ in 0..limit {
-            let Some(value) = iter.key() else{
+            let Some(value) = iter.key() else {
                 match iter.status() {
                     Ok(()) => break,
                     Err(e) => {
