@@ -107,7 +107,7 @@ impl RpcState {
         })
     }
 
-    pub async fn initialize(&self, engine: &Arc<ton_indexer::Engine>) -> Result<()> {
+    pub async fn initialize(self: &Arc<Self>, engine: &Arc<ton_indexer::Engine>) -> Result<()> {
         match engine.load_last_key_block().await {
             Ok(last_key_block) => {
                 self.runtime_storage

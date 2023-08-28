@@ -448,6 +448,198 @@ impl PersistentStorage {
         Ok(())
     }
 
+    pub async fn remove_old_transactions(&self, min_lt: u64) -> Result<()> {
+        const ITEMS_PER_BATCH: usize = 100000;
+
+        type TxKey = [u8; tables::Transactions::KEY_LEN];
+
+        enum PendingDelete {
+            Single,
+            Range,
+        }
+
+        struct GcState<'a> {
+            db: &'a rocksdb::DB,
+            writeopt: &'a rocksdb::WriteOptions,
+            tx_cf: weedb::BoundedCfHandle<'a>,
+            tx_by_hash: weedb::BoundedCfHandle<'a>,
+            tx_by_in_msg: weedb::BoundedCfHandle<'a>,
+            key_range_begin: TxKey,
+            key_range_end: TxKey,
+            pending_delete: Option<PendingDelete>,
+            batch: rocksdb::WriteBatch,
+            total_tx: usize,
+            total_tx_by_hash: usize,
+            total_tx_by_in_msg: usize,
+        }
+
+        impl<'a> GcState<'a> {
+            fn new(db: &'a PersistentStorage) -> Self {
+                Self {
+                    db: db.inner.raw(),
+                    writeopt: db.transactions.write_config(),
+                    tx_cf: db.transactions.cf(),
+                    tx_by_hash: db.transactions_by_hash.cf(),
+                    tx_by_in_msg: db.transactions_by_in_msg.cf(),
+                    key_range_begin: [0u8; tables::Transactions::KEY_LEN],
+                    key_range_end: [0u8; tables::Transactions::KEY_LEN],
+                    pending_delete: None,
+                    batch: Default::default(),
+                    total_tx: 0,
+                    total_tx_by_hash: 0,
+                    total_tx_by_in_msg: 0,
+                }
+            }
+
+            fn delete_tx(&mut self, key: &TxKey, mut value: &[u8]) {
+                // Batch multiple deletes for the primary table
+                self.pending_delete = Some(if self.pending_delete.is_none() {
+                    self.key_range_begin.copy_from_slice(key);
+                    PendingDelete::Single
+                } else {
+                    self.key_range_end.copy_from_slice(key);
+                    PendingDelete::Range
+                });
+                self.total_tx += 1;
+
+                // Delete secondary index entries
+                if let Ok(tx_cell) = ton_types::deserialize_tree_of_cells(&mut value) {
+                    // Delete transaction by hash index entry
+                    self.batch
+                        .delete_cf(&self.tx_by_hash, tx_cell.repr_hash().as_slice());
+                    self.total_tx_by_hash += 1;
+
+                    // Delete transaction by incoming message hash index entry
+                    if let Ok(tx) = ton_block::Transaction::construct_from_cell(tx_cell) {
+                        if let Some(in_msg) = tx.in_msg_cell() {
+                            self.batch
+                                .delete_cf(&self.tx_by_in_msg, in_msg.repr_hash().as_slice());
+                            self.total_tx_by_in_msg += 1;
+                        }
+                    }
+                }
+            }
+
+            fn end_account(&mut self) {
+                // Flush pending batch
+                if let Some(pending) = self.pending_delete.take() {
+                    match pending {
+                        PendingDelete::Single => self
+                            .batch
+                            .delete_cf(&self.tx_cf, self.key_range_begin.as_slice()),
+                        PendingDelete::Range => self.batch.delete_range_cf(
+                            &self.tx_cf,
+                            self.key_range_begin.as_slice(),
+                            self.key_range_end.as_slice(),
+                        ),
+                    }
+                }
+            }
+
+            fn flush(&mut self) -> Result<()> {
+                self.db
+                    .write_opt(std::mem::take(&mut self.batch), self.writeopt)?;
+                Ok(())
+            }
+        }
+
+        let now = Instant::now();
+        tracing::info!(min_lt, "removing old transactions");
+
+        // Prepare snapshot and iterator
+        let db = self.inner.raw().as_ref();
+        let snapshot = db.snapshot();
+        let mut readopts = self.transactions.new_read_config();
+        readopts.set_snapshot(&snapshot);
+        let mut iter = db.raw_iterator_cf_opt(&self.transactions.cf(), readopts);
+        iter.seek_to_first();
+
+        // Prepare gc state
+        let mut gc = GcState::new(self);
+
+        // `last_account` buffer is used to track the last processed account.
+        //
+        // The buffer is also used to seek for the next account. Its last
+        // 8 bytes are `u64::MAX`. It forces the `seek` method to jump right
+        // to the first tx of the next account (assuming that there are no
+        // transactions with LT == u64::MAX).
+        let mut last_account: TxKey = [0u8; tables::Transactions::KEY_LEN];
+        last_account[33..41].copy_from_slice(&u64::MAX.to_be_bytes());
+
+        let mut items = 0usize;
+        let mut total_invalid = 0usize;
+        loop {
+            let Some((key, value)) = iter.item() else {
+                break iter.status()?;
+            };
+
+            let Ok::<&TxKey, _>(key) = key.try_into() else {
+                // Remove invalid entires from the primary index only
+                items += 1;
+                total_invalid += 1;
+                gc.batch.delete_cf(&gc.tx_cf, key);
+                continue;
+            };
+
+            // Check whether the next account is processed
+            let item_account = &key[..33];
+            let is_next_account = item_account != &last_account[..33];
+            if is_next_account {
+                // Update last account address
+                last_account[..33].copy_from_slice(item_account);
+
+                // Add pending delete into batch
+                gc.end_account();
+            }
+
+            // Get lt from the key
+            let lt = u64::from_be_bytes(key[33..41].try_into().unwrap());
+
+            if lt < min_lt {
+                // Add tx and its secondary indices into the batch
+                items += 1;
+                gc.delete_tx(key, value);
+            } else {
+                // Seek to the next account
+                if lt < u64::MAX {
+                    iter.seek(last_account.as_slice());
+                } else {
+                    iter.next();
+                }
+
+                // Give some rest to the thread
+                tokio::task::yield_now().await;
+            }
+
+            // Write batch
+            if items >= ITEMS_PER_BATCH {
+                gc.flush()?;
+                items = 0;
+            }
+        }
+
+        // Add final pending delete into batch
+        gc.end_account();
+
+        // Write remaining batch
+        if items != 0 {
+            gc.flush()?;
+        }
+
+        tracing::info!(
+            elapsed = %humantime::format_duration(now.elapsed()),
+            min_lt,
+            total_invalid,
+            total_tx = gc.total_tx,
+            total_tx_by_hash = gc.total_tx_by_hash,
+            total_tx_by_in_msg = gc.total_tx_by_in_msg,
+            "removed old transactions",
+        );
+
+        // Done
+        Ok(())
+    }
+
     pub fn update(
         &self,
         block_id: &ton_block::BlockIdExt,
