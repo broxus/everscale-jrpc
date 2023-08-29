@@ -150,40 +150,38 @@ impl RpcState {
                 let mut interval =
                     tokio::time::interval(Duration::from_secs(gc.interval_sec as u64));
                 loop {
-                    'gc: {
-                        let Some(item) = this.upgrade() else {
-                            return;
-                        };
-                        let Some(engine) = item.engine.load_full().upgrade() else {
-                            return;
-                        };
-                        let Some(persistent_storage) = item.persistent_storage.as_ref() else {
-                            return;
-                        };
+                    interval.tick().await;
 
-                        let target_utime = broxus_util::now().saturating_sub(gc.ttl_sec);
+                    let Some(item) = this.upgrade() else {
+                        return;
+                    };
+                    let Some(engine) = item.engine.load_full().upgrade() else {
+                        return;
+                    };
+                    let Some(persistent_storage) = item.persistent_storage.as_ref() else {
+                        return;
+                    };
 
-                        let min_lt = match engine.find_closest_key_block_lt(target_utime).await {
-                            Ok(lt) => lt,
-                            Err(e) => {
-                                tracing::error!(
-                                    target_utime,
-                                    "failed to find closes key block lt: {e:?}"
-                                );
-                                break 'gc;
-                            }
-                        };
+                    let target_utime = broxus_util::now().saturating_sub(gc.ttl_sec);
 
-                        if let Err(e) = persistent_storage.remove_old_transactions(min_lt).await {
+                    let min_lt = match engine.find_closest_key_block_lt(target_utime).await {
+                        Ok(lt) => lt,
+                        Err(e) => {
                             tracing::error!(
                                 target_utime,
-                                min_lt,
-                                "failed to remove old transactions: {e:?}"
+                                "failed to find the closest key block lt: {e:?}"
                             );
+                            continue;
                         }
-                    }
+                    };
 
-                    interval.tick().await;
+                    if let Err(e) = persistent_storage.remove_old_transactions(min_lt).await {
+                        tracing::error!(
+                            target_utime,
+                            min_lt,
+                            "failed to remove old transactions: {e:?}"
+                        );
+                    }
                 }
             });
         }

@@ -622,10 +622,12 @@ impl PersistentStorage {
 
         let mut items = 0usize;
         let mut total_invalid = 0usize;
+        let mut iteration = 0usize;
         loop {
             let Some((key, value)) = iter.item() else {
                 break iter.status()?;
             };
+            iteration += 1;
 
             let Ok::<&TxKey, _>(key) = key.try_into() else {
                 // Remove invalid entires from the primary index only
@@ -653,6 +655,7 @@ impl PersistentStorage {
                 // Add tx and its secondary indices into the batch
                 items += 1;
                 gc.delete_tx(key, value);
+                iter.next();
             } else {
                 // Seek to the next account
                 if lt < u64::MAX {
@@ -660,15 +663,18 @@ impl PersistentStorage {
                 } else {
                     iter.next();
                 }
-
-                // Give some rest to the thread
-                tokio::task::yield_now().await;
             }
 
             // Write batch
             if items >= ITEMS_PER_BATCH {
+                tracing::info!(iteration, "flushing batch");
                 gc.flush()?;
                 items = 0;
+            }
+
+            if iteration % 1000 == 0 {
+                // Give some rest to the thread
+                tokio::task::yield_now().await;
             }
         }
 
