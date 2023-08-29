@@ -245,7 +245,7 @@ impl JrpcServer {
             shard_client_time_diff: metrics.shard_client_time_diff.load(Ordering::Acquire),
             smallest_known_lt: self.state.persistent_storage.as_ref().map(|storage| {
                 storage
-                    .smallest_known_transaction_lt
+                    .min_tx_lt
                     .load(Ordering::Acquire)
             }),
         })

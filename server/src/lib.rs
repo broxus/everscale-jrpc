@@ -3,8 +3,9 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use arc_swap::ArcSwapWeak;
 use serde::{Deserialize, Serialize};
 use ton_indexer::utils::{BlockStuff, ShardStateStuff};
@@ -38,11 +39,8 @@ pub enum ApiConfig {
     Full {
         #[serde(flatten)]
         common: CommonApiConfig,
-        persistent_db_path: PathBuf,
-        #[serde(default)]
-        persistent_db_options: DbOptions,
-        #[serde(default)]
-        shard_split_depth: u8,
+        #[serde(flatten)]
+        storage: PersistentStorageConfig,
     },
 }
 
@@ -57,6 +55,24 @@ impl Default for ApiConfig {
 pub struct CommonApiConfig {
     /// Whether to generate a stub keyblock from zerostate. Default: `false`.
     pub generate_stub_keyblock: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PersistentStorageConfig {
+    pub persistent_db_path: PathBuf,
+    #[serde(default)]
+    pub persistent_db_options: DbOptions,
+    #[serde(default)]
+    pub shard_split_depth: u8,
+    #[serde(default)]
+    pub transactions_gc_options: Option<TransactionsGcOptions>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionsGcOptions {
+    pub ttl_sec: u32,
+    pub interval_sec: u32,
 }
 
 impl ApiConfig {
@@ -85,16 +101,7 @@ impl RpcState {
     pub fn new(config: Config) -> Result<Self> {
         let persistent_storage = match &config.api_config {
             ApiConfig::Simple(..) => None,
-            ApiConfig::Full {
-                persistent_db_path,
-                persistent_db_options,
-                shard_split_depth,
-                ..
-            } => Some(PersistentStorage::new(
-                persistent_db_path,
-                persistent_db_options,
-                *shard_split_depth,
-            )?),
+            ApiConfig::Full { storage, .. } => Some(PersistentStorage::new(storage)?),
         };
 
         Ok(Self {
@@ -125,6 +132,62 @@ impl RpcState {
         };
 
         self.engine.store(Arc::downgrade(engine));
+
+        if let Some(persistent_storage) = &self.persistent_storage {
+            persistent_storage
+                .sync_min_tx_lt()
+                .context("Failed to sync min transaction lt")?;
+        }
+
+        let transactions_gc = self
+            .persistent_storage
+            .as_ref()
+            .and_then(|s| s.transactions_gc_options().clone());
+
+        if let Some(gc) = transactions_gc {
+            let this = Arc::downgrade(self);
+            tokio::spawn(async move {
+                let mut interval =
+                    tokio::time::interval(Duration::from_secs(gc.interval_sec as u64));
+                loop {
+                    'gc: {
+                        let Some(item) = this.upgrade() else {
+                            return;
+                        };
+                        let Some(engine) = item.engine.load_full().upgrade() else {
+                            return;
+                        };
+                        let Some(persistent_storage) = item.persistent_storage.as_ref() else {
+                            return;
+                        };
+
+                        let target_utime = broxus_util::now().saturating_sub(gc.ttl_sec);
+
+                        let min_lt = match engine.find_closest_key_block_lt(target_utime).await {
+                            Ok(lt) => lt,
+                            Err(e) => {
+                                tracing::error!(
+                                    target_utime,
+                                    "failed to find closes key block lt: {e:?}"
+                                );
+                                break 'gc;
+                            }
+                        };
+
+                        if let Err(e) = persistent_storage.remove_old_transactions(min_lt).await {
+                            tracing::error!(
+                                target_utime,
+                                min_lt,
+                                "failed to remove old transactions: {e:?}"
+                            );
+                        }
+                    }
+
+                    interval.tick().await;
+                }
+            });
+        }
+
         Ok(())
     }
 

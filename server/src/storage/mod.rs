@@ -1,5 +1,4 @@
-use std::path::Path;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -13,6 +12,8 @@ use ton_block::{Deserializable, HashmapAugType};
 use ton_indexer::utils::{RefMcStateHandle, ShardStateStuff};
 use ton_types::{HashmapType, UInt256};
 use weedb::{rocksdb, Caches, Migrations, Semver, Table, WeeDb};
+
+use crate::{PersistentStorageConfig, TransactionsGcOptions};
 
 pub mod tables;
 
@@ -215,14 +216,15 @@ pub struct PersistentStorage {
     pub inner: WeeDb,
 
     pub shard_split_depth: u8,
+    pub transactions_gc_options: Option<TransactionsGcOptions>,
 
-    pub smallest_known_transaction_lt: AtomicU64,
+    pub min_tx_lt: AtomicU64,
 }
 
 impl PersistentStorage {
     const DB_VERSION: Semver = [0, 1, 0];
 
-    pub fn new(path: &Path, options: &DbOptions, shard_split_depth: u8) -> Result<Self> {
+    pub fn new(config: &PersistentStorageConfig) -> Result<Self> {
         let limit = match fdlimit::raise_fd_limit() {
             // New fd limit
             Some(limit) => limit,
@@ -233,6 +235,7 @@ impl PersistentStorage {
                     .0
             }
         };
+        let options = &config.persistent_db_options;
 
         let caches_capacity =
             std::cmp::max(options.max_memory_usage / 3, options.min_caches_capacity);
@@ -243,7 +246,7 @@ impl PersistentStorage {
 
         let caches = Caches::with_capacity(caches_capacity);
 
-        let inner = WeeDb::builder(path, caches)
+        let inner = WeeDb::builder(&config.persistent_db_path, caches)
             .options(|opts, _| {
                 opts.set_level_compaction_dynamic_level_bytes(true);
 
@@ -288,21 +291,6 @@ impl PersistentStorage {
         // Find smallest lt
         let transactions: Table<tables::Transactions> = inner.instantiate_table();
 
-        let now = Instant::now();
-        tracing::info!("computing the smallest known transaction lt");
-        let mut smallest_lt = u64::MAX;
-        for tx in transactions.iterator(rocksdb::IteratorMode::Start) {
-            let (k, _) = tx?;
-            if k.len() == tables::Transactions::KEY_LEN {
-                smallest_lt = smallest_lt.min(u64::from_be_bytes(k[33..].try_into().unwrap()));
-            }
-        }
-        tracing::info!(
-            elapsed = %humantime::format_duration(now.elapsed()),
-            smallest_lt,
-            "found the smallest known transaction lt",
-        );
-
         Ok(Self {
             transactions,
             transactions_by_hash: inner.instantiate_table(),
@@ -311,9 +299,14 @@ impl PersistentStorage {
             code_hashes_by_address: inner.instantiate_table(),
             snapshot: Default::default(),
             inner,
-            shard_split_depth,
-            smallest_known_transaction_lt: AtomicU64::new(smallest_lt),
+            shard_split_depth: config.shard_split_depth,
+            transactions_gc_options: config.transactions_gc_options.clone(),
+            min_tx_lt: AtomicU64::new(u64::MAX),
         })
+    }
+
+    pub fn transactions_gc_options(&self) -> &Option<TransactionsGcOptions> {
+        &self.transactions_gc_options
     }
 
     pub fn load_snapshot(&self) -> Option<Arc<OwnedSnapshot>> {
@@ -323,6 +316,47 @@ impl PersistentStorage {
     pub fn update_snapshot(&self) {
         let snapshot = Arc::new(OwnedSnapshot::new(self.inner.raw().clone()));
         self.snapshot.store(Some(snapshot));
+    }
+
+    pub fn sync_min_tx_lt(&self) -> Result<()> {
+        let db = self.inner.raw();
+
+        let min_lt = match db.get(TX_MIN_LT)? {
+            Some(value) if value.len() == 8 => {
+                Some(u64::from_le_bytes(value[..8].try_into().unwrap()))
+            }
+            Some(value) if value.is_empty() => None,
+            Some(_) => anyhow::bail!("Invalid stored min transaction lt"),
+            None => {
+                let now = Instant::now();
+                tracing::info!("computing the smallest known transaction lt");
+
+                let mut min_lt = None::<u64>;
+                for tx in self.transactions.iterator(rocksdb::IteratorMode::Start) {
+                    let (k, _) = tx?;
+                    if k.len() == tables::Transactions::KEY_LEN {
+                        let lt = u64::from_be_bytes(k[33..].try_into().unwrap());
+                        match &mut min_lt {
+                            Some(min_lt) => *min_lt = (*min_lt).min(lt),
+                            None => min_lt = Some(lt),
+                        }
+                    }
+                }
+
+                tracing::info!(
+                    elapsed = %humantime::format_duration(now.elapsed()),
+                    "computed the smallest known transaction lt",
+                );
+
+                min_lt
+            }
+        };
+
+        tracing::info!(?min_lt);
+
+        self.min_tx_lt
+            .store(min_lt.unwrap_or(u64::MAX), Ordering::Release);
+        Ok(())
     }
 
     pub async fn reset_accounts(&self, shard_state: Arc<ShardStateStuff>) -> Result<()> {
@@ -543,11 +577,31 @@ impl PersistentStorage {
             }
         }
 
+        let db = self.inner.raw().as_ref();
+
+        // Check min lt from the last run
+        if let Some(known_min_lt) = db.get(TX_MIN_LT)? {
+            if known_min_lt.len() == 8 {
+                let known_min_lt = u64::from_le_bytes(known_min_lt[..8].try_into().unwrap());
+                let was_running =
+                    matches!(db.get(TX_GC_RUNNING)?, Some(status) if !status.is_empty());
+
+                if !was_running && min_lt <= known_min_lt {
+                    tracing::info!(known_min_lt, min_lt, "skipping removing old transactions");
+                    return Ok(());
+                }
+            }
+        }
+
+        // Force update min lt and gc flag
+        self.min_tx_lt.store(min_lt, Ordering::Release);
+        db.put(TX_MIN_LT, min_lt.to_le_bytes())?;
+        db.put(TX_GC_RUNNING, [1])?;
+
         let now = Instant::now();
         tracing::info!(min_lt, "removing old transactions");
 
         // Prepare snapshot and iterator
-        let db = self.inner.raw().as_ref();
         let snapshot = db.snapshot();
         let mut readopts = self.transactions.new_read_config();
         readopts.set_snapshot(&snapshot);
@@ -625,6 +679,9 @@ impl PersistentStorage {
         if items != 0 {
             gc.flush()?;
         }
+
+        // Reset gc flag
+        db.put(TX_GC_RUNNING, [])?;
 
         tracing::info!(
             elapsed = %humantime::format_duration(now.elapsed()),
@@ -1011,6 +1068,9 @@ fn split_shard(
 
     Ok(())
 }
+
+const TX_MIN_LT: &[u8] = b"tx_min_lt";
+const TX_GC_RUNNING: &[u8] = b"tx_gc_running";
 
 #[cfg(test)]
 mod tests {

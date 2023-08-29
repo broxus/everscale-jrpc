@@ -255,7 +255,7 @@ impl ProtoServer {
                     .as_ref()
                     .map(|storage| {
                         storage
-                            .smallest_known_transaction_lt
+                            .min_tx_lt
                             .load(Ordering::Acquire)
                     })
                     .unwrap_or(u64::MAX),
