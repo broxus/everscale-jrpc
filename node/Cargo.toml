@@ -34,3 +34,7 @@ ton_block = { git = "https://github.com/broxus/ton-labs-block.git" }
 ton_types = { git = "https://github.com/broxus/ton-labs-types.git" }
 
 everscale-rpc-server = { path = "../server" }
+
+[features]
+default = []
+venom = ["ton-indexer/venom", "ton_block/venom"]

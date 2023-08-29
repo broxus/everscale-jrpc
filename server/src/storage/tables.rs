@@ -2,7 +2,7 @@ use weedb::rocksdb::{BlockBasedOptions, DBCompressionType, Options};
 use weedb::{Caches, ColumnFamily};
 
 /// - Key: `workchain: i8, account: u256, lt: u64`
-/// - Value: `prev_lt: u64, transaction: bytes`
+/// - Value: transaction: bytes`
 pub struct Transactions;
 
 impl Transactions {

@@ -183,7 +183,7 @@ impl std::fmt::Display for ExplorerMetrics<'_> {
 
         // jemalloc
 
-        let ton_indexer::alloc::profiling::JemallocStats {
+        let broxus_util::alloc::profiling::JemallocStats {
             allocated,
             active,
             metadata,
@@ -192,7 +192,7 @@ impl std::fmt::Display for ExplorerMetrics<'_> {
             retained,
             dirty,
             fragmentation,
-        } = ton_indexer::alloc::profiling::fetch_stats().map_err(|e| {
+        } = broxus_util::alloc::profiling::fetch_stats().map_err(|e| {
             tracing::error!("failed to fetch allocator stats: {e:?}");
             std::fmt::Error
         })?;
