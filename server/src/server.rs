@@ -50,20 +50,7 @@ impl Server {
         // Prepare middleware
         let service = ServiceBuilder::new()
             .layer(DefaultBodyLimit::max(MAX_REQUEST_SIZE))
-            .layer(
-                CorsLayer::new()
-                    .allow_headers(AllowHeaders::list([
-                        axum::http::header::AUTHORIZATION,
-                        axum::http::header::CONTENT_TYPE,
-                    ]))
-                    .allow_origin(AllowOrigin::any())
-                    .allow_methods(AllowMethods::list([
-                        axum::http::Method::GET,
-                        axum::http::Method::POST,
-                        axum::http::Method::OPTIONS,
-                        axum::http::Method::PUT,
-                    ])),
-            )
+            .layer(CorsLayer::permissive())
             .layer(TimeoutLayer::new(Duration::from_secs(25)));
 
         #[cfg(feature = "compression")]
