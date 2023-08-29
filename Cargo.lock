@@ -954,7 +954,7 @@ dependencies = [
 
 [[package]]
 name = "everscale-rpc-node"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "argh",
@@ -980,7 +980,7 @@ dependencies = [
 
 [[package]]
 name = "everscale-rpc-server"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "arc-swap",
