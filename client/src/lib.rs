@@ -107,6 +107,26 @@ impl RpcClient {
         }
     }
 
+    pub async fn get_transactions(
+        &self,
+        limit: u8,
+        account: &MsgAddressInt,
+        last_transaction_lt: Option<u64>,
+    ) -> Result<Vec<Transaction>> {
+        match self {
+            RpcClient::Jrpc(client) => {
+                client
+                    .get_transactions(limit, account, last_transaction_lt)
+                    .await
+            }
+            RpcClient::Proto(client) => {
+                client
+                    .get_transactions(limit, account, last_transaction_lt)
+                    .await
+            }
+        }
+    }
+
     pub async fn get_contract_state(
         &self,
         address: &MsgAddressInt,
