@@ -42,7 +42,7 @@ impl Server {
 
     pub fn serve(self: Arc<Self>) -> Result<impl Future<Output = ()> + Send + 'static> {
         use tower::ServiceBuilder;
-        use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
+        use tower_http::cors::CorsLayer;
         use tower_http::timeout::TimeoutLayer;
 
         let listen_address = self.state.config.listen_address;
