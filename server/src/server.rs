@@ -12,6 +12,7 @@ use axum::RequestExt;
 
 use crate::jrpc;
 use crate::proto;
+use crate::ws;
 use crate::RpcState;
 
 pub struct Server {
@@ -60,6 +61,7 @@ impl Server {
         let router = axum::Router::new()
             .route("/", get(health_check))
             .route("/", post(common_route))
+            .route("/ws", get(ws::ws_router))
             .route("/rpc", post(jrpc::jrpc_router))
             .route("/proto", post(proto::proto_router))
             .layer(service)

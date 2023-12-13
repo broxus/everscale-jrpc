@@ -19,6 +19,7 @@ mod proto;
 mod server;
 mod storage;
 mod utils;
+mod ws;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -90,6 +91,7 @@ impl ApiConfig {
 pub struct RpcState {
     config: Config,
     engine: ArcSwapWeak<ton_indexer::Engine>,
+    ws_producer: ws::WsProducer,
     runtime_storage: RuntimeStorage,
     persistent_storage: Option<PersistentStorage>,
     jrpc_counters: Counters,
@@ -107,6 +109,7 @@ impl RpcState {
             config,
             engine: Default::default(),
             runtime_storage: Default::default(),
+            ws_producer: Default::default(),
             persistent_storage,
             jrpc_counters: Counters::named("jrpc"),
             proto_counters: Counters::named("proto"),
@@ -206,7 +209,7 @@ impl RpcState {
         Ok(())
     }
 
-    pub fn process_block(
+    pub async fn process_block(
         &self,
         block_stuff: &BlockStuff,
         shard_state: Option<&ShardStateStuff>,
@@ -218,9 +221,10 @@ impl RpcState {
             block_info,
             shard_state,
         )
+        .await
     }
 
-    pub fn process_block_parts(
+    pub async fn process_block_parts(
         &self,
         block_id: &ton_block::BlockIdExt,
         block: &ton_block::Block,
@@ -239,6 +243,8 @@ impl RpcState {
         if let Some(storage) = &self.persistent_storage {
             storage.update(block_id, block, shard_state)?;
         }
+
+        self.ws_producer.handle_block(block).await?;
 
         Ok(())
     }
