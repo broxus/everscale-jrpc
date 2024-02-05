@@ -253,11 +253,7 @@ impl ProtoServer {
                     .state
                     .persistent_storage
                     .as_ref()
-                    .map(|storage| {
-                        storage
-                            .min_tx_lt
-                            .load(Ordering::Acquire)
-                    })
+                    .map(|storage| storage.min_tx_lt.load(Ordering::Acquire))
                     .unwrap_or(u64::MAX),
             },
         ))

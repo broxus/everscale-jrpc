@@ -1,4 +1,4 @@
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -17,7 +17,7 @@ pub struct AppConfig {
     /// Prometheus metrics exporter settings.
     /// Completely disable when not specified
     #[serde(default)]
-    pub metrics_settings: Option<pomfrit::Config>,
+    pub metrics_settings: Option<MetricsConfig>,
 
     /// Light node settings
     #[serde(default)]
@@ -114,6 +114,22 @@ impl NodeConfig {
             overlay_shard_options: self.overlay_shard_options,
             neighbours_options: self.neighbours_options,
         })
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
+pub struct MetricsConfig {
+    /// Listen address of metrics. Used by the client to gather prometheus metrics.
+    /// Default: `127.0.0.1:10000`
+    pub listen_address: SocketAddr,
+}
+
+impl Default for MetricsConfig {
+    fn default() -> Self {
+        Self {
+            listen_address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 10000),
+        }
     }
 }
 

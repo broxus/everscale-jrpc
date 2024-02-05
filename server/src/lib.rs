@@ -1,7 +1,6 @@
 use std::future::Future;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -109,8 +108,8 @@ impl RpcState {
             engine: Default::default(),
             runtime_storage: Default::default(),
             persistent_storage,
-            jrpc_counters: Default::default(),
-            proto_counters: Default::default(),
+            jrpc_counters: Counters::named("jrpc"),
+            proto_counters: Counters::named("proto"),
         })
     }
 
@@ -193,14 +192,6 @@ impl RpcState {
         Server::new(self)?.serve()
     }
 
-    pub fn jrpc_metrics(&self) -> Metrics {
-        self.jrpc_counters.metrics()
-    }
-
-    pub fn proto_metrics(&self) -> Metrics {
-        self.proto_counters.metrics()
-    }
-
     pub fn process_blocks_edge(&self) {
         if let Some(storage) = &self.persistent_storage {
             storage.update_snapshot();
@@ -269,32 +260,30 @@ pub struct InitialState {
     pub smallest_known_lt: u64,
 }
 
-#[derive(Default)]
 struct Counters {
-    total: AtomicU64,
-    not_found: AtomicU64,
-    errors: AtomicU64,
+    total: metrics::Counter,
+    not_found: metrics::Counter,
+    errors: metrics::Counter,
 }
 
 impl Counters {
+    fn named(name: &'static str) -> Self {
+        Self {
+            total: metrics::counter!("jrpc_total", "kind" => name),
+            not_found: metrics::counter!("jrpc_not_found", "kind" => name),
+            errors: metrics::counter!("jrpc_errors", "kind" => name),
+        }
+    }
     fn increase_total(&self) {
-        self.total.fetch_add(1, Ordering::Relaxed);
+        self.total.increment(1)
     }
 
     fn increase_not_found(&self) {
-        self.not_found.fetch_add(1, Ordering::Relaxed);
+        self.not_found.increment(1)
     }
 
     fn increase_errors(&self) {
-        self.errors.fetch_add(1, Ordering::Relaxed);
-    }
-
-    fn metrics(&self) -> Metrics {
-        Metrics {
-            total: self.total.load(Ordering::Relaxed),
-            not_found: self.not_found.load(Ordering::Relaxed),
-            errors: self.errors.load(Ordering::Relaxed),
-        }
+        self.errors.increment(1)
     }
 }
 

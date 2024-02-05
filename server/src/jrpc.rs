@@ -243,11 +243,11 @@ impl JrpcServer {
             last_mc_utime: metrics.last_mc_utime.load(Ordering::Acquire),
             mc_time_diff: metrics.mc_time_diff.load(Ordering::Acquire),
             shard_client_time_diff: metrics.shard_client_time_diff.load(Ordering::Acquire),
-            smallest_known_lt: self.state.persistent_storage.as_ref().map(|storage| {
-                storage
-                    .min_tx_lt
-                    .load(Ordering::Acquire)
-            }),
+            smallest_known_lt: self
+                .state
+                .persistent_storage
+                .as_ref()
+                .map(|storage| storage.min_tx_lt.load(Ordering::Acquire)),
         })
     }
 

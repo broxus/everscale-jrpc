@@ -1,12 +1,12 @@
+use std::io::IsTerminal;
+use std::net::SocketAddr;
 use std::panic;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use argh::FromArgs;
 use everscale_rpc_server::RpcState;
-use is_terminal::IsTerminal;
-use pomfrit::formatter::*;
+use std::sync::Arc;
 use ton_indexer::Engine;
 use tracing_subscriber::EnvFilter;
 
@@ -111,18 +111,9 @@ async fn run(app: App) -> Result<()> {
     }
 
     // Create metrics exporter
-    let (_exporter, metrics_writer) = pomfrit::create_exporter(config.metrics_settings).await?;
-    metrics_writer.spawn({
-        let rpc_state = rpc_state.clone();
-        let engine = engine.clone();
-        move |buf| {
-            buf.write(ExplorerMetrics {
-                engine: &engine,
-                panicked: &panicked,
-                rpc_state: &rpc_state,
-            });
-        }
-    });
+    if let Some(c) = config.metrics_settings {
+        install_monitoring(c.listen_address)?;
+    }
     tracing::info!("initialized exporter");
 
     // Start the engine
@@ -139,134 +130,15 @@ async fn run(app: App) -> Result<()> {
     futures_util::future::pending().await
 }
 
-struct ExplorerMetrics<'a> {
-    engine: &'a Engine,
-    panicked: &'a AtomicBool,
-    rpc_state: &'a RpcState,
-}
-
-impl std::fmt::Display for ExplorerMetrics<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let panicked = self.panicked.load(Ordering::Acquire) as u8;
-        f.begin_metric("panicked").value(panicked)?;
-
-        // TON indexer
-        let indexer_metrics = self.engine.metrics();
-
-        let last_mc_utime = indexer_metrics.last_mc_utime.load(Ordering::Acquire);
-        if last_mc_utime > 0 {
-            f.begin_metric("ton_indexer_mc_time_diff")
-                .value(indexer_metrics.mc_time_diff.load(Ordering::Acquire))?;
-            f.begin_metric("ton_indexer_sc_time_diff").value(
-                indexer_metrics
-                    .shard_client_time_diff
-                    .load(Ordering::Acquire),
-            )?;
-
-            f.begin_metric("ton_indexer_last_mc_utime")
-                .value(last_mc_utime)?;
-        }
-
-        let last_mc_block_seqno = indexer_metrics.last_mc_block_seqno.load(Ordering::Acquire);
-        if last_mc_block_seqno > 0 {
-            f.begin_metric("ton_indexer_last_mc_block_seqno")
-                .value(last_mc_block_seqno)?;
-        }
-
-        let last_shard_client_mc_block_seqno = indexer_metrics
-            .last_shard_client_mc_block_seqno
-            .load(Ordering::Acquire);
-        if last_shard_client_mc_block_seqno > 0 {
-            f.begin_metric("ton_indexer_last_sc_block_seqno")
-                .value(last_shard_client_mc_block_seqno)?;
-        }
-
-        // jemalloc
-
-        let broxus_util::alloc::profiling::JemallocStats {
-            allocated,
-            active,
-            metadata,
-            resident,
-            mapped,
-            retained,
-            dirty,
-            fragmentation,
-        } = broxus_util::alloc::profiling::fetch_stats().map_err(|e| {
-            tracing::error!("failed to fetch allocator stats: {e:?}");
-            std::fmt::Error
-        })?;
-
-        f.begin_metric("jemalloc_allocated_bytes")
-            .value(allocated)?;
-        f.begin_metric("jemalloc_active_bytes").value(active)?;
-        f.begin_metric("jemalloc_metadata_bytes").value(metadata)?;
-        f.begin_metric("jemalloc_resident_bytes").value(resident)?;
-        f.begin_metric("jemalloc_mapped_bytes").value(mapped)?;
-        f.begin_metric("jemalloc_retained_bytes").value(retained)?;
-        f.begin_metric("jemalloc_dirty_bytes").value(dirty)?;
-        f.begin_metric("jemalloc_fragmentation_bytes")
-            .value(fragmentation)?;
-
-        // RocksDB
-
-        let ton_indexer::RocksdbStats {
-            whole_db_stats,
-            block_cache_usage,
-            block_cache_pined_usage,
-        } = self.engine.get_memory_usage_stats().map_err(|e| {
-            tracing::error!("failed to fetch rocksdb stats: {e:?}");
-            std::fmt::Error
-        })?;
-
-        f.begin_metric("rocksdb_block_cache_usage_bytes")
-            .value(block_cache_usage)?;
-        f.begin_metric("rocksdb_block_cache_pined_usage_bytes")
-            .value(block_cache_pined_usage)?;
-        f.begin_metric("rocksdb_memtable_total_size_bytes")
-            .value(whole_db_stats.mem_table_total)?;
-        f.begin_metric("rocksdb_memtable_unflushed_size_bytes")
-            .value(whole_db_stats.mem_table_unflushed)?;
-        f.begin_metric("rocksdb_memtable_cache_bytes")
-            .value(whole_db_stats.cache_total)?;
-
-        let internal_metrics = self.engine.internal_metrics();
-
-        f.begin_metric("shard_states_cache_len")
-            .value(internal_metrics.shard_states_cache_len)?;
-        f.begin_metric("shard_states_operations_len")
-            .value(internal_metrics.shard_states_operations_len)?;
-        f.begin_metric("block_applying_operations_len")
-            .value(internal_metrics.block_applying_operations_len)?;
-        f.begin_metric("next_block_applying_operations_len")
-            .value(internal_metrics.next_block_applying_operations_len)?;
-
-        let cells_cache_stats = internal_metrics.cells_cache_stats;
-        f.begin_metric("cells_cache_hits")
-            .value(cells_cache_stats.hits)?;
-        f.begin_metric("cells_cache_requests")
-            .value(cells_cache_stats.requests)?;
-        f.begin_metric("cells_cache_occupied")
-            .value(cells_cache_stats.occupied)?;
-        f.begin_metric("cells_cache_hits_ratio")
-            .value(cells_cache_stats.hits_ratio)?;
-        f.begin_metric("cells_cache_size_bytes")
-            .value(cells_cache_stats.size_bytes)?;
-
-        // RPC
-
-        f.begin_metric("jrpc_enabled").value(1)?;
-
-        let jrpc = self.rpc_state.jrpc_metrics();
-        f.begin_metric("jrpc_total").value(jrpc.total)?;
-        f.begin_metric("jrpc_errors").value(jrpc.errors)?;
-        f.begin_metric("jrpc_not_found").value(jrpc.not_found)?;
-
-        let proto = self.rpc_state.proto_metrics();
-        f.begin_metric("proto_total").value(proto.total)?;
-        f.begin_metric("proto_errors").value(proto.errors)?;
-        f.begin_metric("proto_not_found").value(proto.not_found)?;
-
-        Ok(())
-    }
+fn install_monitoring(metrics_addr: SocketAddr) -> Result<()> {
+    use metrics_exporter_prometheus::Matcher;
+    const EXPONENTIAL_SECONDS: &[f64] = &[
+        0.000001, 0.0001, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+        60.0, 120.0, 300.0, 600.0, 3600.0,
+    ];
+    metrics_exporter_prometheus::PrometheusBuilder::new()
+        .set_buckets_for_metric(Matcher::Prefix("time".to_string()), EXPONENTIAL_SECONDS)?
+        .with_http_listener(metrics_addr)
+        .install()
+        .context("Failed installing metrics exporter")
 }
