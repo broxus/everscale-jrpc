@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{Query, State, WebSocketUpgrade};
-use futures_util::stream::SplitSink;
+use futures_util::stream::{FuturesUnordered, SplitSink};
 use futures_util::{SinkExt, StreamExt};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -80,10 +80,25 @@ impl WsProducer {
         })?;
 
         let message = bincode::serialize(&accounts)?;
+
         let mut clients = self.clients.lock().await;
-        for (_, client) in clients.iter_mut() {
-            let message = Message::Binary(message.clone());
-            client.send(message).await?;
+        let messages_to_send = FuturesUnordered::new();
+        for (client_id, client) in clients.iter_mut() {
+            messages_to_send.push(async {
+                let message = Message::Binary(message.clone());
+                let res = client.send(message).await;
+                (*client_id, res)
+            });
+        }
+
+        let messages_to_send = messages_to_send
+            .collect::<Vec<(uuid::Uuid, Result<(), _>)>>()
+            .await;
+
+        for (client_id, result) in messages_to_send {
+            if let Err(e) = result {
+                tracing::error!(%client_id, "failed to send message to ws client: {e}");
+            }
         }
 
         Ok(())
