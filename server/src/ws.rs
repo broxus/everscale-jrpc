@@ -8,8 +8,8 @@ use futures_util::{SinkExt, StreamExt};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
-use ton_block::{Deserializable, HashmapAugType};
-use ton_types::HashmapType;
+use ton_block::{Deserializable, HashmapAugType, MsgAddressInt};
+use ton_types::{AccountId, HashmapType};
 
 use crate::server::Server;
 
@@ -47,15 +47,15 @@ async fn handle_socket(client_id: uuid::Uuid, state: Arc<Server>, socket: WebSoc
 
 #[derive(Default)]
 pub struct WsProducer {
-    clients: Mutex<FxHashMap<uuid::Uuid, SplitSink<WebSocket, axum::extract::ws::Message>>>,
+    clients: Mutex<FxHashMap<uuid::Uuid, SplitSink<WebSocket, Message>>>,
 }
 
 impl WsProducer {
-    pub async fn handle_block(&self, block: &ton_block::Block) -> Result<()> {
+    pub async fn handle_block(&self, workchain_id: i32, block: &ton_block::Block) -> Result<()> {
         let extra = block.read_extra()?;
         let account_blocks = extra.read_account_blocks()?;
 
-        let mut accounts = FxHashMap::default();
+        let mut accounts = Vec::with_capacity(account_blocks.len()?);
         account_blocks.iterate_with_keys(|account, value| {
             let mut lt = 0;
             value.transactions().iterate_slices(|_, mut value| {
@@ -67,7 +67,14 @@ impl WsProducer {
 
                 Ok(true)
             })?;
-            accounts.insert(account.into_vec(), lt);
+
+            let address =
+                MsgAddressInt::with_standart(None, workchain_id as i8, AccountId::from(account))?;
+
+            accounts.push(AccountInfo {
+                account: nekoton_proto::utils::addr_to_bytes(&address).to_vec(),
+                account_lt: lt,
+            });
 
             Ok(true)
         })?;
@@ -75,10 +82,16 @@ impl WsProducer {
         let message = bincode::serialize(&accounts)?;
         let mut clients = self.clients.lock().await;
         for (_, client) in clients.iter_mut() {
-            let message = axum::extract::ws::Message::Binary(message.clone());
+            let message = Message::Binary(message.clone());
             client.send(message).await?;
         }
 
         Ok(())
     }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct AccountInfo {
+    pub account: Vec<u8>,
+    pub account_lt: u64,
 }

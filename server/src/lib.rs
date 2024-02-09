@@ -244,7 +244,9 @@ impl RpcState {
             storage.update(block_id, block, shard_state)?;
         }
 
-        self.ws_producer.handle_block(block).await?;
+        self.ws_producer
+            .handle_block(block_id.shard_id.workchain_id(), block)
+            .await?;
 
         Ok(())
     }
