@@ -3,11 +3,11 @@ use std::sync::Arc;
 use anyhow::Result;
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{Query, State, WebSocketUpgrade};
-use futures_util::stream::{FuturesUnordered, SplitSink};
+use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 use ton_block::{Deserializable, HashmapAugType, MsgAddressInt};
 use ton_types::{AccountId, HashmapType};
 
@@ -28,17 +28,21 @@ pub async fn ws_router(
 }
 
 async fn handle_socket(client_id: uuid::Uuid, state: Arc<Server>, socket: WebSocket) {
-    let (sender, mut receiver) = socket.split();
+    let (tx, rx) = mpsc::unbounded_channel();
 
     let clients = &state.state().ws_producer.clients;
-    clients.lock().await.insert(client_id, sender);
+    clients.lock().await.insert(client_id, tx);
+
+    let (sender, mut receiver) = socket.split();
+
+    start_listening_ws_events(client_id, sender, rx);
 
     while let Some(msg) = receiver.next().await {
         match msg {
             Ok(Message::Close(_)) | Err(_) => {
                 tracing::warn!(%client_id, "websocket connection closed");
                 clients.lock().await.remove(&client_id);
-                return;
+                break;
             }
             Ok(_) => {}
         }
@@ -47,7 +51,7 @@ async fn handle_socket(client_id: uuid::Uuid, state: Arc<Server>, socket: WebSoc
 
 #[derive(Default)]
 pub struct WsProducer {
-    clients: Mutex<FxHashMap<uuid::Uuid, SplitSink<WebSocket, Message>>>,
+    clients: Mutex<FxHashMap<uuid::Uuid, mpsc::UnboundedSender<Message>>>,
 }
 
 impl WsProducer {
@@ -82,27 +86,34 @@ impl WsProducer {
         let message = bincode::serialize(&accounts)?;
 
         let mut clients = self.clients.lock().await;
-        let messages_to_send = FuturesUnordered::new();
         for (client_id, client) in clients.iter_mut() {
-            messages_to_send.push(async {
-                let message = Message::Binary(message.clone());
-                let res = client.send(message).await;
-                (*client_id, res)
-            });
-        }
-
-        let messages_to_send = messages_to_send
-            .collect::<Vec<(uuid::Uuid, Result<(), _>)>>()
-            .await;
-
-        for (client_id, result) in messages_to_send {
-            if let Err(e) = result {
-                tracing::error!(%client_id, "failed to send message to ws client: {e}");
+            let message = Message::Binary(message.clone());
+            if let Err(e) = client.send(message) {
+                tracing::error!(%client_id, "failed to send ws message to channel: {e}")
             }
         }
 
         Ok(())
     }
+}
+
+fn start_listening_ws_events(
+    client_id: uuid::Uuid,
+    mut ws_sender: SplitSink<WebSocket, Message>,
+    mut events_rx: mpsc::UnboundedReceiver<Message>,
+) {
+    tokio::spawn(async move {
+        while let Some(message) = events_rx.recv().await {
+            if let Err(e) = ws_sender.send(message).await {
+                tracing::error!(%client_id, "failed to send message to ws client: {e}");
+            }
+        }
+
+        tracing::warn!(%client_id, "stopped listening for ws events");
+
+        events_rx.close();
+        while events_rx.recv().await.is_some() {}
+    });
 }
 
 #[derive(Clone, Serialize, Deserialize)]
