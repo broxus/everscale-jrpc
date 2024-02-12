@@ -47,7 +47,7 @@ async fn main() {
             bounce: false,
             destination: to,
             amount: 1_000_000_000,
-            /// can be built with `nekoton_abi::MessageBuilder`
+            // can be built with `nekoton_abi::MessageBuilder`
             body: None,
             state_init: None,
         },
