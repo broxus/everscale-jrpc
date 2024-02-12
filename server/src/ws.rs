@@ -28,7 +28,8 @@ pub async fn ws_router(
 }
 
 async fn handle_socket(client_id: uuid::Uuid, state: Arc<Server>, socket: WebSocket) {
-    let (tx, rx) = mpsc::unbounded_channel();
+    const BUFFER_SIZE: usize = 100;
+    let (tx, rx) = mpsc::channel(BUFFER_SIZE);
 
     let clients = &state.state().ws_producer.clients;
     clients.lock().await.insert(client_id, tx);
@@ -51,7 +52,7 @@ async fn handle_socket(client_id: uuid::Uuid, state: Arc<Server>, socket: WebSoc
 
 #[derive(Default)]
 pub struct WsProducer {
-    clients: Mutex<FxHashMap<uuid::Uuid, mpsc::UnboundedSender<Message>>>,
+    clients: Mutex<FxHashMap<uuid::Uuid, mpsc::Sender<Message>>>,
 }
 
 impl WsProducer {
@@ -86,12 +87,16 @@ impl WsProducer {
         let message = bincode::serialize(&accounts)?;
 
         let mut clients = self.clients.lock().await;
-        for (client_id, client) in clients.iter_mut() {
+        clients.retain(|client_id, client_tx| {
             let message = Message::Binary(message.clone());
-            if let Err(e) = client.send(message) {
-                tracing::error!(%client_id, "failed to send ws message to channel: {e}")
+            match client_tx.try_send(message) {
+                Ok(_) => true,
+                Err(e) => {
+                    tracing::error!(%client_id, "failed to send ws message to channel: {e}");
+                    false
+                }
             }
-        }
+        });
 
         Ok(())
     }
@@ -100,13 +105,17 @@ impl WsProducer {
 fn start_listening_ws_events(
     client_id: uuid::Uuid,
     mut ws_sender: SplitSink<WebSocket, Message>,
-    mut events_rx: mpsc::UnboundedReceiver<Message>,
+    mut events_rx: mpsc::Receiver<Message>,
 ) {
     tokio::spawn(async move {
         while let Some(message) = events_rx.recv().await {
             if let Err(e) = ws_sender.send(message).await {
                 tracing::error!(%client_id, "failed to send message to ws client: {e}");
             }
+        }
+
+        if let Err(e) = ws_sender.close().await {
+            tracing::error!(%client_id, "failed to close ws connection: {e}")
         }
 
         tracing::warn!(%client_id, "stopped listening for ws events");
