@@ -20,6 +20,7 @@ impl ton_indexer::Subscriber for EngineSubscriber {
     async fn process_block(&self, ctx: ProcessBlockContext<'_>) -> Result<()> {
         self.rpc_state
             .process_block(ctx.block_stuff(), ctx.shard_state_stuff())
+            .await
             .context("Failed to update server state")
     }
 

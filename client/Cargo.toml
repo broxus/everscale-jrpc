@@ -36,6 +36,7 @@ everscale-rpc-models = { path = "../models" }
 ed25519-dalek = "1.0.1"
 hex = "0.4.3"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+nekoton = { git = "https://github.com/broxus/nekoton.git", default-features = true }
 
 [features]
 default = ["log"]
