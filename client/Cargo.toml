@@ -1,7 +1,7 @@
 [package]
 name = "everscale-rpc-client"
 edition = "2021"
-version = "0.6.0"
+version = "0.6.1"
 
 [dependencies]
 anyhow = "1"

@@ -513,6 +513,13 @@ where
             .map(Some)?;
         Ok(result)
     }
+
+    async fn get_transactions(
+        &self,
+        limit: u8,
+        account: &MsgAddressInt,
+        last_transaction_lt: Option<u64>,
+    ) -> Result<Vec<Transaction>>;
 }
 
 #[async_trait::async_trait]

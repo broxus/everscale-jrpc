@@ -169,6 +169,16 @@ where
             )),
         }
     }
+
+    async fn get_transactions(
+        &self,
+        limit: u8,
+        account: &MsgAddressInt,
+        last_transaction_lt: Option<u64>,
+    ) -> Result<Vec<Transaction>> {
+        self.get_transactions(limit, account, last_transaction_lt)
+            .await
+    }
 }
 
 impl<T: Connection + Ord + Clone + 'static> JrpcClientImpl<T> {
