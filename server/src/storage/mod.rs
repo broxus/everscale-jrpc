@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 use arc_swap::ArcSwapOption;
+use fdlimit::Outcome;
 use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -227,9 +228,17 @@ impl PersistentStorage {
     pub fn new(config: &PersistentStorageConfig) -> Result<Self> {
         let limit = match fdlimit::raise_fd_limit() {
             // New fd limit
-            Some(limit) => limit,
+            Ok(Outcome::LimitRaised { from, to }) => {
+                tracing::info!("Raised fd limit from {} to {}", from, to);
+                to
+            }
+            Ok(Outcome::Unsupported) => {
+                tracing::warn!("Failed to raise fd limit: unsupported platform");
+                256
+            }
             // Current soft limit
-            None => {
+            Err(e) => {
+                tracing::warn!("Failed to raise fd limit: {e}");
                 rlimit::getrlimit(rlimit::Resource::NOFILE)
                     .unwrap_or((256, 0))
                     .0
