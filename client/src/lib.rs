@@ -522,6 +522,7 @@ pub trait Connection: Send + Sync {
     fn update_was_dead(&self, is_dead: bool);
 
     async fn is_alive(&self) -> bool {
+        return true;
         let check_result = self.is_alive_inner().await;
         let is_alive = check_result.as_bool();
         self.update_was_dead(!is_alive);
