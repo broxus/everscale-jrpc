@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -32,7 +33,10 @@ async fn handle_socket(client_id: uuid::Uuid, state: Arc<Server>, socket: WebSoc
     let (tx, rx) = mpsc::channel(BUFFER_SIZE);
 
     let clients = &state.state().ws_producer.clients;
-    clients.lock().await.insert(client_id, tx);
+    clients
+        .lock()
+        .await
+        .insert(client_id, (tx, AtomicUsize::default()));
 
     let (sender, mut receiver) = socket.split();
 
@@ -52,7 +56,7 @@ async fn handle_socket(client_id: uuid::Uuid, state: Arc<Server>, socket: WebSoc
 
 #[derive(Default)]
 pub struct WsProducer {
-    clients: Mutex<FxHashMap<uuid::Uuid, mpsc::Sender<Message>>>,
+    clients: Mutex<FxHashMap<uuid::Uuid, (mpsc::Sender<Message>, AtomicUsize)>>,
 }
 
 impl WsProducer {
@@ -84,10 +88,22 @@ impl WsProducer {
             Ok(true)
         })?;
 
-        let message = bincode::serialize(&accounts)?;
-
         let mut clients = self.clients.lock().await;
-        clients.retain(|client_id, client_tx| {
+        clients.retain(|client_id, (client_tx, msg_seqno)| {
+            let seqno = msg_seqno.load(Ordering::Acquire);
+            let message = match bincode::serialize(&WsMessage {
+                seqno,
+                payload: accounts.clone(),
+            }) {
+                Ok(message) => message,
+                Err(e) => {
+                    tracing::error!(%client_id, "failed to serialize ws message: {e}");
+                    return false;
+                }
+            };
+
+            msg_seqno.store(seqno + 1, Ordering::Release);
+
             let message = Message::Binary(message.clone());
             match client_tx.try_send(message) {
                 Ok(_) => true,
@@ -129,4 +145,10 @@ fn start_listening_ws_events(
 struct AccountInfo {
     pub account: Vec<u8>,
     pub account_lt: u64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct WsMessage {
+    seqno: usize,
+    payload: Vec<AccountInfo>,
 }
