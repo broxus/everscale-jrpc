@@ -31,6 +31,7 @@ nekoton-proto = { git = "https://github.com/broxus/nekoton.git", default-feature
 nekoton-utils = { git = "https://github.com/broxus/nekoton.git", default-features = false }
 
 everscale-rpc-models = { path = "../models" }
+chrono = "0.4.38"
 
 [dev-dependencies]
 ed25519-dalek = "1.0.1"

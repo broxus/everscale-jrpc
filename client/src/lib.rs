@@ -269,7 +269,7 @@ where
             .http2_keep_alive_interval(Duration::from_secs(60))
             .http2_keep_alive_timeout(Duration::from_secs(1))
             .http2_keep_alive_while_idle(true)
-            .gzip(false)
+            .gzip(true)
             .build()?;
 
         let client = Self::with_client(client, endpoints, options).await?;
@@ -529,6 +529,7 @@ pub trait Connection: Send + Sync {
     fn update_was_dead(&self, is_dead: bool);
 
     async fn is_alive(&self) -> bool {
+        return true;
         let check_result = self.is_alive_inner().await;
         let is_alive = check_result.as_bool();
         self.update_was_dead(!is_alive);
