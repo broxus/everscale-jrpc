@@ -83,6 +83,13 @@ impl RpcClient {
         }
     }
 
+    pub async fn get_keyblock(&self) -> Result<ton_block::Block> {
+        match self {
+            RpcClient::Jrpc(client) => client.get_keyblock().await,
+            RpcClient::Proto(client) => client.get_keyblock().await,
+        }
+    }
+
     pub async fn broadcast_message(&self, message: ton_block::Message) -> Result<(), RunError> {
         match self {
             RpcClient::Jrpc(client) => client.broadcast_message(message).await,
@@ -520,6 +527,8 @@ where
         account: &MsgAddressInt,
         last_transaction_lt: Option<u64>,
     ) -> Result<Vec<Transaction>>;
+
+    async fn get_keyblock(&self) -> Result<ton_block::Block>;
 }
 
 #[async_trait::async_trait]

@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use nekoton::transport::models::ExistingContract;
 use parking_lot::Mutex;
 use reqwest::StatusCode;
-use ton_block::{CommonMsgInfo, Deserializable, MsgAddressInt, Serializable, Transaction};
+use ton_block::{Block, CommonMsgInfo, Deserializable, MsgAddressInt, Serializable, Transaction};
 use ton_types::UInt256;
 
 use everscale_rpc_models::proto::ProtoAnswer;
@@ -243,6 +243,11 @@ where
     ) -> Result<Vec<Transaction>> {
         self.get_transactions(limit, account, last_transaction_lt)
             .await
+    }
+
+    async fn get_keyblock(&self) -> Result<Block> {
+        let res = self.get_latest_key_block().await?;
+        Ok(res)
     }
 }
 
