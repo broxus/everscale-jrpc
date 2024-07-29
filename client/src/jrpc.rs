@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use nekoton::transport::models::ExistingContract;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use ton_block::{CommonMsgInfo, Deserializable, Message, MsgAddressInt, Transaction};
+use ton_block::{Block, CommonMsgInfo, Deserializable, Message, MsgAddressInt, Transaction};
 use ton_types::UInt256;
 
 use everscale_rpc_models::{jrpc, Timings};
@@ -179,6 +179,10 @@ where
         self.get_transactions(limit, account, last_transaction_lt)
             .await
     }
+
+    async fn get_keyblock(&self) -> Result<Block> {
+        self.get_keyblock().await
+    }
 }
 
 impl<T: Connection + Ord + Clone + 'static> JrpcClientImpl<T> {
@@ -238,6 +242,18 @@ impl<T: Connection + Ord + Clone + 'static> JrpcClientImpl<T> {
         };
 
         Ok(Some(raw_transaction))
+    }
+
+    pub async fn get_keyblock(&self) -> Result<Block> {
+        let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
+            method: "getLatestKeyBlock",
+            params: &(),
+        });
+
+        let data: jrpc::GetLatestKeyBlockResponse = self.request(&request).await?.into_inner();
+        let block = data.block;
+
+        Ok(block)
     }
 
     pub async fn request<'a, S, D>(

@@ -520,6 +520,8 @@ where
         account: &MsgAddressInt,
         last_transaction_lt: Option<u64>,
     ) -> Result<Vec<Transaction>>;
+
+    async fn get_keyblock(&self) -> Result<ton_block::Block>;
 }
 
 #[async_trait::async_trait]

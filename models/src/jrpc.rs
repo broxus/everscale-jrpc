@@ -545,7 +545,7 @@ impl<'de> Deserialize<'de> for GetTimingsResponse {
             }
         }
 
-        const FIELDS: &'static [&'static str] = &[
+        const FIELDS: &[&str] = &[
             "last_mc_block_seqno",
             "last_shard_client_mc_block_seqno",
             "last_mc_utime",
