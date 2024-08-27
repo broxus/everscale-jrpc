@@ -38,7 +38,7 @@ pub enum RpcClient {
 }
 
 impl RpcClient {
-    pub async fn new<I: IntoIterator<Item = Url> + Send + Clone>(
+    pub async fn new<I: IntoIterator<Item=Url> + Send + Clone>(
         endpoints: I,
         options: ClientOptions,
     ) -> Result<Self> {
@@ -265,7 +265,7 @@ pub trait Client<T>: Send + Sync + Sized
 where
     T: Connection + Ord + Clone + 'static,
 {
-    async fn new<I: IntoIterator<Item = Url> + Send>(
+    async fn new<I: IntoIterator<Item=Url> + Send>(
         endpoints: I,
         options: ClientOptions,
     ) -> Result<Self> {
@@ -285,7 +285,7 @@ where
     }
 
     /// `endpoints` - full URLs of the RPC endpoints.
-    async fn with_client<I: IntoIterator<Item = Url> + Send>(
+    async fn with_client<I: IntoIterator<Item=Url> + Send>(
         client: reqwest::Client,
         endpoints: I,
         options: ClientOptions,
@@ -602,7 +602,7 @@ impl<'a, T: Serialize + Send + Sync> RpcRequest<'a, T> {
 
 pub enum RpcResponse<D>
 where
-    for<'de> D: Deserialize<'de>,
+        for<'de> D: Deserialize<'de>,
 {
     JRPC(Answer<D>),
     PROTO(Answer<rpc::Response>),
@@ -708,6 +708,9 @@ impl ChooseStrategy {
     fn choose<T: Connection + Ord + Clone>(&self, endpoints: &[T]) -> Option<T> {
         use rand::prelude::SliceRandom;
 
+        if endpoints.is_empty() {
+            return None;
+        }
         match self {
             ChooseStrategy::Random => endpoints.choose(&mut rand::thread_rng()).cloned(),
             ChooseStrategy::RoundRobin => {
