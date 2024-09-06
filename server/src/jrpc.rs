@@ -52,6 +52,7 @@ impl JrpcServer {
 
         // Prepare key block response listener
         fn serialize_block(
+            seqno: u32,
             block: &ton_block::Block,
         ) -> Result<(Arc<serde_json::Value>, Arc<serde_json::Value>)> {
             let extra = block.read_extra()?;
@@ -66,6 +67,7 @@ impl JrpcServer {
             let config_response = serde_json::to_value(jrpc::GetBlockchainConfigResponse {
                 global_id: block.global_id,
                 config: config.clone(),
+                seqno,
             })?;
 
             Ok((Arc::new(key_block_response), Arc::new(config_response)))
@@ -73,8 +75,8 @@ impl JrpcServer {
 
         let mut key_block_rx = state.runtime_storage.subscribe_to_key_blocks();
         let (key_block_response, config_response) = match &*key_block_rx.borrow_and_update() {
-            Some(block) => {
-                let (key_block, config) = serialize_block(block)?;
+            Some((seqno, block)) => {
+                let (key_block, config) = serialize_block(*seqno, block)?;
                 (
                     Arc::new(ArcSwapOption::new(Some(key_block))),
                     Arc::new(ArcSwapOption::new(Some(config))),
@@ -97,7 +99,7 @@ impl JrpcServer {
                     let data = key_block_rx
                         .borrow_and_update()
                         .as_ref()
-                        .map(serialize_block);
+                        .map(|(seqno, block)| serialize_block(*seqno, block));
 
                     match data {
                         Some(Ok((key_block, config))) => {

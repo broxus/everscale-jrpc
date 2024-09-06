@@ -120,13 +120,13 @@ impl RpcState {
         match engine.load_last_key_block().await {
             Ok(last_key_block) => {
                 self.runtime_storage
-                    .update_key_block(last_key_block.block());
+                    .update_key_block(last_key_block.id().seq_no, last_key_block.block());
             }
             Err(e) => {
                 if self.config.api_config.common().generate_stub_keyblock {
                     let zerostate = engine.load_mc_zero_state().await?;
                     self.runtime_storage
-                        .update_key_block(&make_key_block_stub(&zerostate)?);
+                        .update_key_block(0, &make_key_block_stub(&zerostate)?);
                 } else {
                     return Err(e);
                 }
@@ -237,7 +237,8 @@ impl RpcState {
         }
 
         if block_info.key_block() {
-            self.runtime_storage.update_key_block(block);
+            self.runtime_storage
+                .update_key_block(block_id.seq_no, block);
         }
 
         if let Some(storage) = &self.persistent_storage {

@@ -19,7 +19,7 @@ use crate::{PersistentStorageConfig, TransactionsGcOptions};
 pub mod tables;
 
 pub struct RuntimeStorage {
-    key_block: watch::Sender<Option<ton_block::Block>>,
+    key_block: watch::Sender<Option<(u32, ton_block::Block)>>,
     masterchain_accounts_cache: RwLock<Option<ShardAccounts>>,
     shard_accounts_cache: RwLock<FxHashMap<ton_block::ShardIdent, ShardAccounts>>,
 }
@@ -36,12 +36,12 @@ impl Default for RuntimeStorage {
 }
 
 impl RuntimeStorage {
-    pub fn subscribe_to_key_blocks(&self) -> watch::Receiver<Option<ton_block::Block>> {
+    pub fn subscribe_to_key_blocks(&self) -> watch::Receiver<Option<(u32, ton_block::Block)>> {
         self.key_block.subscribe()
     }
 
-    pub fn update_key_block(&self, block: &ton_block::Block) {
-        self.key_block.send_replace(Some(block.clone()));
+    pub fn update_key_block(&self, seqno: u32, block: &ton_block::Block) {
+        self.key_block.send_replace(Some((seqno, block.clone())));
     }
 
     pub fn update_contract_states(
