@@ -68,11 +68,14 @@ impl Server {
             .with_state(self);
 
         // Start server
-        let future = axum::Server::try_bind(&listen_address)?
-            .http2_adaptive_window(true)
-            .tcp_keepalive(Duration::from_secs(60).into())
-            .serve(router.into_make_service());
-        Ok(async move { future.await.unwrap() })
+        let fut = async move {
+            let s = tokio::net::TcpListener::bind(&listen_address)
+                .await
+                .expect("failed bind");
+            axum::serve(s, router).await.expect("failed to serve");
+        };
+
+        Ok(fut)
     }
 }
 

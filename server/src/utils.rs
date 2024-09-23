@@ -1,3 +1,4 @@
+use axum_jrpc::Id;
 use std::borrow::Cow;
 use ton_block::MsgAddressInt;
 
@@ -36,7 +37,7 @@ define_query_error!(QueryError, {
 });
 
 impl QueryError {
-    pub fn with_id(self, id: i64) -> JrpcError<'static> {
+    pub fn with_id(self, id: Id) -> JrpcError<'static> {
         let (code, message) = self.info();
         JrpcError::new(id, code, Cow::Borrowed(message))
     }

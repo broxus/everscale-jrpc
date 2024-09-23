@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use arc_swap::ArcSwapOption;
 use axum::extract::State;
 use axum::response::IntoResponse;
+use axum_jrpc::Id;
 use nekoton_abi::GenTimings;
 use serde::Serialize;
 use ton_block::{Deserializable, Serializable};
@@ -555,7 +556,7 @@ impl serde::Serialize for RawStorageValue<'_> {
 }
 
 struct JrpcSuccess<T> {
-    id: i64,
+    id: Id,
     result: T,
 }
 
@@ -573,13 +574,13 @@ impl<T: serde::Serialize> serde::Serialize for JrpcSuccess<T> {
         #[derive(Serialize)]
         struct Helper<'a, T> {
             jsonrpc: &'static str,
-            id: i64,
+            id: &'a Id,
             result: &'a T,
         }
 
         Helper {
             jsonrpc: JSONRPC,
-            id: self.id,
+            id: &self.id,
             result: &self.result,
         }
         .serialize(serializer)
@@ -587,13 +588,13 @@ impl<T: serde::Serialize> serde::Serialize for JrpcSuccess<T> {
 }
 
 pub struct JrpcError<'a> {
-    id: i64,
+    id: Id,
     code: i32,
     message: Cow<'a, str>,
 }
 
 impl<'a> JrpcError<'a> {
-    pub fn new(id: i64, code: i32, message: Cow<'a, str>) -> Self {
+    pub fn new(id: Id, code: i32, message: Cow<'a, str>) -> Self {
         Self { id, code, message }
     }
 }
@@ -612,7 +613,7 @@ impl serde::Serialize for JrpcError<'_> {
         #[derive(Serialize)]
         struct Helper<'a> {
             jsonrpc: &'static str,
-            id: i64,
+            id: &'a Id,
             error: ErrorHelper<'a>,
         }
 
@@ -625,7 +626,7 @@ impl serde::Serialize for JrpcError<'_> {
 
         Helper {
             jsonrpc: JSONRPC,
-            id: self.id,
+            id: &self.id,
             error: ErrorHelper {
                 code: self.code,
                 message: self.message.as_ref(),
