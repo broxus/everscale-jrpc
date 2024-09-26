@@ -75,7 +75,7 @@ impl ProtoServer {
             let config_response = rpc::response::GetBlockchainConfig {
                 global_id: block.global_id,
                 config: Bytes::from(config.write_to_bytes()?),
-                seqno,
+                seqno: Some(seqno),
             };
 
             Ok((Arc::new(key_block_response), Arc::new(config_response)))

@@ -170,6 +170,30 @@ where
         }
     }
 
+    async fn get_account_by_code_hash(
+        &self,
+        code_hash: [u8; 32],
+        continuation: Option<&MsgAddressInt>,
+        limit: u8,
+    ) -> Result<Vec<MsgAddressInt>> {
+        let continuation = continuation.cloned();
+        let req = jrpc::GetAccountsByCodeHashRequest {
+            code_hash,
+            continuation,
+            limit,
+        };
+        let request = RpcRequest::JRPC(JrpcRequest {
+            method: "getAccountsByCodeHash",
+            params: &req,
+        });
+        let addrs: Vec<String> = self
+            .request(&request)
+            .await
+            .map(|x| x.result)
+            .context("Failed to get accounts by code hash")?;
+        addrs.into_iter().map(|x| x.parse()).collect()
+    }
+
     async fn get_transactions(
         &self,
         limit: u8,

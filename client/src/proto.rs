@@ -235,6 +235,33 @@ where
         }
     }
 
+    async fn get_account_by_code_hash(
+        &self,
+        code_hash: [u8; 32],
+        continuation: Option<&MsgAddressInt>,
+        limit: u8,
+    ) -> Result<Vec<MsgAddressInt>> {
+        let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
+            call: Some(rpc::request::Call::GetAccountsByCodeHash(
+                rpc::request::GetAccountsByCodeHash {
+                    code_hash: bytes::Bytes::copy_from_slice(&code_hash),
+                    continuation: continuation.map(utils::addr_to_bytes),
+                    limit: limit as u32,
+                },
+            )),
+        });
+
+        let response = self.request(&request).await?.into_inner();
+        match response.result {
+            Some(rpc::response::Result::GetAccounts(accounts)) => Ok(accounts
+                .account
+                .into_iter()
+                .filter_map(|x| utils::bytes_to_addr(&x).ok())
+                .collect()),
+            _ => Err(ClientError::InvalidResponse.into()),
+        }
+    }
+
     async fn get_transactions(
         &self,
         limit: u8,

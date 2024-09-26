@@ -172,6 +172,26 @@ impl RpcClient {
         }
     }
 
+    pub async fn get_accounts_by_code_hash(
+        &self,
+        code_hash: [u8; 32],
+        continuation: Option<&MsgAddressInt>,
+        limit: u8,
+    ) -> Result<Vec<MsgAddressInt>> {
+        match self {
+            RpcClient::Jrpc(client) => {
+                client
+                    .get_account_by_code_hash(code_hash, continuation, limit)
+                    .await
+            }
+            RpcClient::Proto(client) => {
+                client
+                    .get_account_by_code_hash(code_hash, continuation, limit)
+                    .await
+            }
+        }
+    }
+
     pub async fn run_local(
         &self,
         address: &MsgAddressInt,
@@ -359,6 +379,13 @@ where
         address: &MsgAddressInt,
         time: u32,
     ) -> Result<Option<ExistingContract>, RunError>;
+
+    async fn get_account_by_code_hash(
+        &self,
+        code_hash: [u8; 32],
+        continuation: Option<&MsgAddressInt>,
+        limit: u8,
+    ) -> Result<Vec<MsgAddressInt>>;
 
     async fn run_local(
         &self,
