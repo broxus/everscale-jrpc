@@ -1,15 +1,7 @@
 use std::time::SystemTime;
 
-use nekoton_utils::*;
-
 pub mod jrpc;
 pub mod proto;
-
-pub const MC_ACCEPTABLE_TIME_DIFF: u64 = 120;
-pub const SC_ACCEPTABLE_TIME_DIFF: u64 = 120;
-const ACCEPTABLE_BLOCKS_DIFF: u32 = 500;
-
-const ACCEPTABLE_NODE_BLOCK_INSERT_TIME: u64 = 240;
 
 pub fn now() -> u64 {
     SystemTime::now()
@@ -29,19 +21,21 @@ pub struct Timings {
 }
 
 impl Timings {
-    pub fn is_reliable(&self) -> bool {
+    pub fn is_reliable(
+        &self,
+        mc_acceptable_time_diff: u64,
+        sc_acceptable_time_diff: u64,
+        acceptable_blocks_diff: u32,
+    ) -> bool {
         // just booted up
         if self == &Self::default() {
             return false;
         }
 
-        let acceptable_time = (now_sec_u64() - ACCEPTABLE_NODE_BLOCK_INSERT_TIME) as u32;
-
-        self.mc_time_diff.unsigned_abs() < MC_ACCEPTABLE_TIME_DIFF
-            && self.shard_client_time_diff.unsigned_abs() < SC_ACCEPTABLE_TIME_DIFF
+        self.mc_time_diff.unsigned_abs() < mc_acceptable_time_diff
+            && self.shard_client_time_diff.unsigned_abs() < sc_acceptable_time_diff
             && self.last_mc_block_seqno - self.last_shard_client_mc_block_seqno
-                < ACCEPTABLE_BLOCKS_DIFF
-            && self.last_mc_utime > acceptable_time
+                < acceptable_blocks_diff
     }
 
     pub fn has_state_for(&self, time: u32) -> bool {

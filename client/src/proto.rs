@@ -419,6 +419,7 @@ pub struct ProtoConnection {
     client: reqwest::Client,
     was_dead: Arc<AtomicBool>,
     stats: Arc<Mutex<Option<Timings>>>,
+    reliability_params: Arc<ReliabilityParams>,
 }
 
 impl PartialEq<Self> for ProtoConnection {
@@ -461,12 +462,17 @@ impl std::fmt::Display for ProtoConnection {
 
 #[async_trait::async_trait]
 impl Connection for ProtoConnection {
-    fn new(endpoint: String, client: reqwest::Client) -> Self {
+    fn new(
+        endpoint: String,
+        client: reqwest::Client,
+        reliability_params: ReliabilityParams,
+    ) -> Self {
         ProtoConnection {
             endpoint: Arc::new(endpoint),
             client,
             was_dead: Arc::new(AtomicBool::new(false)),
             stats: Arc::new(Default::default()),
+            reliability_params: Arc::new(reliability_params),
         }
     }
 
@@ -488,6 +494,10 @@ impl Connection for ProtoConnection {
 
     fn get_client(&self) -> &reqwest::Client {
         &self.client
+    }
+
+    fn get_reliability_params(&self) -> &ReliabilityParams {
+        &self.reliability_params
     }
 
     async fn is_alive_inner(&self) -> LiveCheckResult {
@@ -516,7 +526,12 @@ impl Connection for ProtoConnection {
             ProtoAnswer::Result(result) => {
                 if let Some(rpc::response::Result::GetTimings(t)) = result.result {
                     let t = Timings::from(t);
-                    let is_reliable = t.is_reliable();
+                    let params = self.get_reliability_params();
+                    let is_reliable = t.is_reliable(
+                        params.mc_acceptable_time_diff_sec,
+                        params.sc_acceptable_time_diff_sec,
+                        params.acceptable_blocks_diff,
+                    );
                     if !is_reliable {
                         let Timings {
                             last_mc_block_seqno,

@@ -313,7 +313,7 @@ where
         let state = Arc::new(State {
             endpoints: endpoints
                 .into_iter()
-                .map(|e| T::new(e.to_string(), client.clone()))
+                .map(|e| T::new(e.to_string(), client.clone(), options.reliability_params))
                 .collect(),
             live_endpoints: Default::default(),
             options: options.clone(),
@@ -560,13 +560,17 @@ where
 
 #[async_trait::async_trait]
 pub trait Connection: Send + Sync {
-    fn new(endpoint: String, client: reqwest::Client) -> Self;
+    fn new(
+        endpoint: String,
+        client: reqwest::Client,
+        reliability_params: ReliabilityParams,
+    ) -> Self;
 
     fn update_was_dead(&self, is_dead: bool);
 
     async fn is_alive(&self) -> bool {
         let check_result = self.is_alive_inner().await;
-        let is_alive = check_result.as_bool();
+        let is_alive = check_result.as_bool(self.get_reliability_params());
         self.update_was_dead(!is_alive);
 
         match check_result {
@@ -585,6 +589,8 @@ pub trait Connection: Send + Sync {
     fn set_stats(&self, stats: Option<Timings>);
 
     fn get_client(&self) -> &reqwest::Client;
+
+    fn get_reliability_params(&self) -> &ReliabilityParams;
 
     async fn is_alive_inner(&self) -> LiveCheckResult;
 
@@ -610,6 +616,13 @@ pub trait Connection: Send + Sync {
         let res = req.send().await?;
         Ok(res)
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct ReliabilityParams {
+    pub mc_acceptable_time_diff_sec: u64,
+    pub sc_acceptable_time_diff_sec: u64,
+    pub acceptable_blocks_diff: u32,
 }
 
 pub enum RpcRequest<'a, T> {
@@ -710,6 +723,8 @@ pub struct ClientOptions {
     pub aggressive_poll_interval: Duration,
 
     pub choose_strategy: ChooseStrategy,
+
+    pub reliability_params: ReliabilityParams,
 }
 
 impl Default for ClientOptions {
@@ -719,6 +734,11 @@ impl Default for ClientOptions {
             request_timeout: Duration::from_secs(3),
             aggressive_poll_interval: Duration::from_secs(1),
             choose_strategy: ChooseStrategy::Random,
+            reliability_params: ReliabilityParams {
+                mc_acceptable_time_diff_sec: 120,
+                sc_acceptable_time_diff_sec: 120,
+                acceptable_blocks_diff: 500,
+            },
         }
     }
 }
@@ -762,9 +782,13 @@ pub enum LiveCheckResult {
 }
 
 impl LiveCheckResult {
-    fn as_bool(&self) -> bool {
+    fn as_bool(&self, reliability_params: &ReliabilityParams) -> bool {
         match self {
-            LiveCheckResult::Live(metrics) => metrics.is_reliable(),
+            LiveCheckResult::Live(metrics) => metrics.is_reliable(
+                reliability_params.mc_acceptable_time_diff_sec,
+                reliability_params.sc_acceptable_time_diff_sec,
+                reliability_params.acceptable_blocks_diff,
+            ),
             LiveCheckResult::Dummy => true,
             LiveCheckResult::Dead => false,
         }

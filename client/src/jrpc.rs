@@ -359,6 +359,7 @@ pub struct JrpcConnection {
     client: reqwest::Client,
     was_dead: Arc<AtomicBool>,
     stats: Arc<Mutex<Option<Timings>>>,
+    params: Arc<ReliabilityParams>,
 }
 
 impl PartialEq<Self> for JrpcConnection {
@@ -401,12 +402,17 @@ impl std::fmt::Display for JrpcConnection {
 
 #[async_trait::async_trait]
 impl Connection for JrpcConnection {
-    fn new(endpoint: String, client: reqwest::Client) -> Self {
+    fn new(
+        endpoint: String,
+        client: reqwest::Client,
+        reliability_params: ReliabilityParams,
+    ) -> Self {
         JrpcConnection {
             endpoint: Arc::new(endpoint),
             client,
             was_dead: Arc::new(AtomicBool::new(false)),
             stats: Arc::new(Default::default()),
+            params: Arc::new(reliability_params),
         }
     }
 
@@ -428,6 +434,10 @@ impl Connection for JrpcConnection {
 
     fn get_client(&self) -> &reqwest::Client {
         &self.client
+    }
+
+    fn get_reliability_params(&self) -> &ReliabilityParams {
+        &self.params
     }
 
     async fn is_alive_inner(&self) -> LiveCheckResult {
@@ -461,10 +471,14 @@ impl Connection for JrpcConnection {
                 #[cfg(feature = "simd")]
                 let timings: Result<jrpc::GetTimingsResponse, _> =
                     simd_json::serde::from_owned_value(v);
-
+                let params = self.get_reliability_params();
                 if let Ok(t) = timings {
                     let t = Timings::from(t);
-                    let is_reliable = t.is_reliable();
+                    let is_reliable = t.is_reliable(
+                        params.mc_acceptable_time_diff_sec,
+                        params.sc_acceptable_time_diff_sec,
+                        params.acceptable_blocks_diff,
+                    );
                     if !is_reliable {
                         let Timings {
                             last_mc_block_seqno,
