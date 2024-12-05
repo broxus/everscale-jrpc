@@ -103,7 +103,7 @@ pub struct GetBlockchainConfigResponse {
     pub global_id: i32,
     #[serde(with = "serde_ton_block")]
     pub config: ton_block::ConfigParams,
-    pub seqno: u32,
+    pub seqno: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
