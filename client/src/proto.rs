@@ -4,11 +4,13 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use nekoton::transport::models::ExistingContract;
 use parking_lot::Mutex;
 use reqwest::StatusCode;
-use ton_block::{Block, CommonMsgInfo, Deserializable, MsgAddressInt, Serializable, Transaction};
+use ton_block::{
+    CommonMsgInfo, ConfigParams, Deserializable, MsgAddressInt, Serializable, Transaction,
+};
 use ton_types::UInt256;
 
 use everscale_rpc_models::proto::ProtoAnswer;
@@ -44,18 +46,7 @@ where
     }
 
     async fn get_blockchain_config(&self) -> Result<ton_executor::BlockchainConfig> {
-        let block = self.get_latest_key_block().await?;
-
-        let extra = block.read_extra()?;
-
-        let master = extra.read_custom()?.context("No masterchain block extra")?;
-
-        let params = master.config().context("Invalid config")?.clone();
-
-        let config = ton_executor::BlockchainConfig::with_config(params, block.global_id)
-            .context("Invalid config")?;
-
-        Ok(config)
+        Ok(self.get_bc_config().await?)
     }
 
     async fn broadcast_message(&self, message: ton_block::Message) -> Result<(), RunError> {
@@ -272,7 +263,7 @@ where
             .await
     }
 
-    async fn get_keyblock(&self) -> Result<Block> {
+    async fn get_keyblock(&self) -> Result<ton_block::Block> {
         let res = self.get_latest_key_block().await?;
         Ok(res)
     }
@@ -289,6 +280,24 @@ impl<T: Connection + Ord + Clone + 'static> ProtoClientImpl<T> {
             Some(rpc::response::Result::GetLatestKeyBlock(key_block)) => Ok(
                 ton_block::Block::construct_from_bytes(key_block.block.as_ref())?,
             ),
+            _ => Err(ClientError::InvalidResponse.into()),
+        }
+    }
+
+    async fn get_bc_config(&self) -> Result<ton_executor::BlockchainConfig, RunError> {
+        let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
+            call: Some(rpc::request::Call::GetBlockchainConfig(())),
+        });
+
+        let response = self.request(&request).await?.into_inner();
+        match response.result {
+            Some(rpc::response::Result::GetBlockchainConfig(blockchain_config)) => {
+                let config_params = decode_config_params(&blockchain_config.config)?;
+                Ok(ton_executor::BlockchainConfig::with_config(
+                    config_params,
+                    blockchain_config.global_id,
+                )?)
+            }
             _ => Err(ClientError::InvalidResponse.into()),
         }
     }
@@ -411,6 +420,11 @@ impl<T: Connection + Ord + Clone + 'static> ProtoClientImpl<T> {
 fn decode_raw_transaction(bytes: &bytes::Bytes) -> Result<Transaction> {
     let cell = ton_types::deserialize_tree_of_cells(&mut bytes.as_ref())?;
     Transaction::construct_from_cell(cell)
+}
+
+fn decode_config_params(bytes: &bytes::Bytes) -> Result<ConfigParams> {
+    let cell = ton_types::deserialize_tree_of_cells(&mut bytes.as_ref())?;
+    ConfigParams::construct_from_cell(cell)
 }
 
 #[derive(Clone, Debug)]
@@ -554,7 +568,7 @@ impl Connection for ProtoConnection {
             }
         }
 
-        // falback to keyblock request
+        // fallback to keyblock request
         let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
             call: Some(rpc::request::Call::GetLatestKeyBlock(())),
         });
@@ -614,10 +628,156 @@ impl Connection for ProtoConnection {
     }
 }
 
-async fn parse_response(res: reqwest::Response) -> anyhow::Result<ProtoAnswer> {
+async fn parse_response(res: reqwest::Response) -> Result<ProtoAnswer> {
     match res.status() {
         StatusCode::OK => ProtoAnswer::decode_success(res.bytes().await?),
         StatusCode::UNPROCESSABLE_ENTITY => ProtoAnswer::decode_error(res.bytes().await?),
         _ => anyhow::bail!(res.status().to_string()),
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::str::FromStr;
+    use std::time::Duration;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test() {
+        tracing_subscriber::fmt::init();
+
+        let rpc = [
+            "http://127.0.0.1:8081",
+            "http://34.78.198.249:8081/proto",
+            "https://jrpc.everwallet.net/proto",
+        ]
+        .iter()
+        .map(|x| x.parse().unwrap())
+        .collect::<Vec<_>>();
+
+        let balanced_client = ProtoClient::new(
+            rpc,
+            ClientOptions {
+                probe_interval: Duration::from_secs(10),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        for _ in 0..10 {
+            let response = balanced_client.get_latest_key_block().await.unwrap();
+            tracing::info!("response is ok: {response:?}");
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get() {
+        let pr = get_client().await;
+
+        pr.get_contract_state(
+            &MsgAddressInt::from_str(
+                "0:8e2586602513e99a55fa2be08561469c7ce51a7d5a25977558e77ef2bc9387b4",
+            )
+            .unwrap(),
+            None,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        pr.get_contract_state(
+            &MsgAddressInt::from_str(
+                "-1:efd5a14409a8a129686114fc092525fddd508f1ea56d1b649a3a695d3a5b188c",
+            )
+            .unwrap(),
+            None,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_key_block() {
+        let pr = get_client().await;
+
+        pr.get_latest_key_block().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_get_blockchain_config() {
+        let pr = get_client().await;
+
+        let config = pr.get_blockchain_config().await.unwrap();
+
+        assert_eq!(config.global_id(), 42);
+        assert_ne!(config.capabilites(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_all_dead() {
+        let pr = JrpcClient::new(
+            [
+                "https://lolkek228.dead/rpc".parse().unwrap(),
+                "http://127.0.0.1:8081".parse().unwrap(),
+                "http://127.0.0.1:12333".parse().unwrap(),
+            ],
+            ClientOptions {
+                probe_interval: Duration::from_secs(10),
+                ..Default::default()
+            },
+        )
+        .await
+        .is_err();
+
+        assert!(pr);
+    }
+
+    #[tokio::test]
+    async fn test_transations() {
+        let pr = get_client().await;
+
+        pr.get_transactions(
+            100,
+            &MsgAddressInt::from_str(
+                "-1:3333333333333333333333333333333333333333333333333333333333333333",
+            )
+            .unwrap(),
+            None,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn get_dst_transaction() {
+        let pr = get_client().await;
+        let tx = pr
+            .get_dst_transaction(
+                &hex::decode("40172727c17aa9ad0dd11c10e822226a7d22cc1e41f8c5d35b7f5614d8a12533")
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(tx.lt, 33247841000007);
+    }
+
+    async fn get_client() -> ProtoClient {
+        ProtoClient::new(
+            [
+                "https://jrpc.everwallet.net/proto".parse().unwrap(),
+                "http://127.0.0.1:8081".parse().unwrap(),
+            ],
+            ClientOptions {
+                probe_interval: Duration::from_secs(10),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap()
     }
 }

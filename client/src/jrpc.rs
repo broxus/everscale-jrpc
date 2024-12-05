@@ -40,19 +40,12 @@ where
     }
 
     async fn get_blockchain_config(&self) -> Result<ton_executor::BlockchainConfig> {
-        let key_block = self.get_latest_key_block().await?;
-        let block = key_block.block;
+        let bc_config = self.get_bc_config().await?;
 
-        let extra = block.read_extra()?;
-
-        let master = extra.read_custom()?.context("No masterchain block extra")?;
-
-        let params = master.config().context("Invalid config")?.clone();
-
-        let config = ton_executor::BlockchainConfig::with_config(params, block.global_id)
-            .context("Invalid config")?;
-
-        Ok(config)
+        Ok(ton_executor::BlockchainConfig::with_config(
+            bc_config.config,
+            bc_config.global_id,
+        )?)
     }
 
     async fn broadcast_message(&self, message: Message) -> Result<(), RunError> {
@@ -213,6 +206,15 @@ impl<T: Connection + Ord + Clone + 'static> JrpcClientImpl<T> {
     pub async fn get_latest_key_block(&self) -> Result<jrpc::GetLatestKeyBlockResponse, RunError> {
         let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
             method: "getLatestKeyBlock",
+            params: &(),
+        });
+
+        self.request(&request).await.map(|x| x.result)
+    }
+
+    async fn get_bc_config(&self) -> Result<jrpc::GetBlockchainConfigResponse, RunError> {
+        let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
+            method: "getBlockchainConfig",
             params: &(),
         });
 
@@ -684,6 +686,16 @@ mod test {
         let pr = get_client().await;
 
         pr.get_latest_key_block().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_get_blockchain_config() {
+        let pr = get_client().await;
+
+        let config = pr.get_blockchain_config().await.unwrap();
+
+        assert_eq!(config.global_id(), 42);
+        assert_ne!(config.capabilites(), 0);
     }
 
     #[tokio::test]
