@@ -11,6 +11,23 @@ pub trait Request: Serialize {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GetLibraryCellRequest {
+    #[serde(with = "serde_hex_array")]
+    pub hash: [u8; 32],
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetLibraryCellResponse {
+    pub cell: Option<String>,
+}
+
+impl Request for GetLibraryCellRequest {
+    type ResponseContainer = Self::Response;
+    type Response = GetLibraryCellResponse;
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GetContractStateRequest {
     /// Address as string
     #[serde(with = "serde_address")]

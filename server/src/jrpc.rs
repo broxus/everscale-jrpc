@@ -6,11 +6,11 @@ use anyhow::{Context, Result};
 use arc_swap::ArcSwapOption;
 use axum::extract::State;
 use axum::response::IntoResponse;
+use everscale_rpc_models::jrpc;
 use nekoton_abi::GenTimings;
 use serde::Serialize;
 use ton_block::{Deserializable, Serializable};
-
-use everscale_rpc_models::jrpc;
+use ton_types::UInt256;
 
 use crate::server::Server;
 use crate::storage::ShardAccountFromCache;
@@ -22,6 +22,7 @@ pub struct JrpcServer {
     capabilities_response: serde_json::Value,
     key_block_response: Arc<ArcSwapOption<serde_json::Value>>,
     config_response: Arc<ArcSwapOption<serde_json::Value>>,
+    library_cache: moka::sync::Cache<UInt256, String, ahash::RandomState>,
 }
 
 impl JrpcServer {
@@ -35,6 +36,7 @@ impl JrpcServer {
                 "getStatus",
                 "getTimings",
                 "getContractState",
+                "getLibraryCell",
                 "sendMessage",
             ];
 
@@ -119,6 +121,9 @@ impl JrpcServer {
             capabilities_response,
             key_block_response,
             config_response,
+            library_cache: moka::sync::Cache::builder()
+                .max_capacity(100)
+                .build_with_hasher(Default::default()),
         }))
     }
 }
@@ -191,6 +196,7 @@ pub async fn jrpc_router(
         "getBlockchainConfig" => req.fill(ctx.jrpc().get_blockchain_config()),
         "getStatus" => req.fill(ctx.jrpc().get_status()),
         "getTimings" => req.fill(ctx.jrpc().get_timings()),
+        "getLibraryCell" => req.fill_with_params(|req| ctx.jrpc().get_library_cell(req)),
         "getContractState" => req.fill_with_params(|req| ctx.jrpc().get_contract_state(req)),
         "getAccountsByCodeHash" => {
             req.fill_with_params(|req| ctx.jrpc().get_accounts_by_code_hash(req))
@@ -251,6 +257,38 @@ impl JrpcServer {
                 .as_ref()
                 .map(|storage| storage.min_tx_lt.load(Ordering::Acquire)),
         })
+    }
+
+    fn get_library_cell(
+        &self,
+        req: &jrpc::GetLibraryCellRequest,
+    ) -> QueryResult<serde_json::Value> {
+        let hash = UInt256::from_slice(req.hash.as_slice());
+        let cell_opt = match self.library_cache.get(&hash) {
+            Some(cell_boc) => Some(cell_boc),
+            None => {
+                match self
+                    .state
+                    .runtime_storage
+                    .get_library_cell(&hash)
+                    .map_err(|_| QueryError::StorageError)?
+                {
+                    Some(cell) => {
+                        let bytes = ton_types::serialize_toc(&cell)
+                            .map_err(|_| QueryError::StorageError)?;
+                        let cell_boc = base64::encode(&bytes);
+                        self.library_cache.insert(hash, cell_boc.clone());
+                        Some(cell_boc)
+                    }
+                    None => None,
+                }
+            }
+        };
+
+        let response =
+            serde_json::to_value(jrpc::GetLibraryCellResponse { cell: cell_opt }).unwrap();
+
+        Ok(response)
     }
 
     fn get_contract_state(
