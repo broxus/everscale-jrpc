@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use everscale_rpc_models::Timings;
 use futures::StreamExt;
 use itertools::Itertools;
 use nekoton::transport::models::ExistingContract;
@@ -20,8 +21,7 @@ use reqwest::header::CONTENT_TYPE;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use ton_block::{GetRepresentationHash, MsgAddressInt, Transaction};
-
-use everscale_rpc_models::Timings;
+use ton_types::{Cell, UInt256};
 
 use crate::jrpc::{JrpcClient, JrpcRequest};
 use crate::proto::ProtoClient;
@@ -133,6 +133,12 @@ impl RpcClient {
             }
         }
     }
+
+    // pub async fn get_library_cell(&self, hash: &UInt256 ) -> Result<Option<Cell>> {
+    //     match self {
+    //         RpcClient::Jrpc(client) =>
+    //     }
+    // }
 
     pub async fn get_contract_state(
         &self,
@@ -556,6 +562,7 @@ where
     ) -> Result<Vec<Transaction>>;
 
     async fn get_keyblock(&self) -> Result<ton_block::Block>;
+    async fn get_library_cell(&self, hash: &UInt256) -> Result<Option<Cell>>;
 }
 
 #[async_trait::async_trait]
