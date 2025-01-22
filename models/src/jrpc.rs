@@ -520,7 +520,7 @@ impl<'de> Deserialize<'de> for GetTimingsResponse {
                             if smallest_known_lt.is_some() {
                                 return Err(de::Error::duplicate_field("smallest_known_lt"));
                             }
-                            smallest_known_lt = Some(map.next_value()?);
+                            smallest_known_lt = map.next_value()?;
                         }
                     }
                 }
@@ -663,6 +663,19 @@ mod test {
         assert_eq!(response.last_mc_utime, 789);
         assert_eq!(response.mc_time_diff, 1000);
         assert_eq!(response.shard_client_time_diff, 2000);
+        assert_eq!(response.smallest_known_lt, None);
+    }
+
+    #[test]
+    fn test_deserialize_missing_smallest_known_lt() {
+        let json = json!({"lastMcBlockSeqno":6265,"lastMcUtime":1737580883,"mcTimeDiff":1,"smallestKnownLt":null});
+
+        let response: GetTimingsResponse = serde_json::from_value(json).unwrap();
+        assert_eq!(response.last_mc_block_seqno, 6265);
+        assert_eq!(response.last_shard_client_mc_block_seqno, 6265);
+        assert_eq!(response.last_mc_utime, 1737580883);
+        assert_eq!(response.mc_time_diff, 1);
+        assert_eq!(response.shard_client_time_diff, 1);
         assert_eq!(response.smallest_known_lt, None);
     }
 

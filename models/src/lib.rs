@@ -104,7 +104,8 @@ mod test {
             shard_client_time_diff: 0,
             smallest_known_lt: None,
         };
-        assert!(!metrics.is_reliable());
+
+        assert!(!metrics.is_reliable(120, 120, 8));
 
         let metrics = Timings {
             last_mc_block_seqno: 100,
@@ -114,6 +115,6 @@ mod test {
             shard_client_time_diff: 130,
             smallest_known_lt: None,
         };
-        assert!(!metrics.is_reliable());
+        assert!(!metrics.is_reliable(60, 60, 1000));
     }
 }
