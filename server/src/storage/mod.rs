@@ -107,11 +107,15 @@ impl RuntimeStorage {
     }
 
     pub fn get_library_cell(&self, hash: &UInt256) -> Result<Option<Cell>> {
-        let guard = self.shard_accounts_cache.read();
-        let lib = match guard.get(&ton_block::ShardIdent::masterchain()) {
+        let state = self.masterchain_accounts_cache.read();
+        let lib = match &*state {
+            None => {
+                tracing::warn!("masterchain_accounts_cache is not ready");
+                None
+            },
             Some(accounts) => accounts.libraries.get(hash)?,
-            None => None,
         };
+
         Ok(lib.map(|x| x.lib().clone()))
     }
 
