@@ -134,11 +134,12 @@ impl RpcClient {
         }
     }
 
-    // pub async fn get_library_cell(&self, hash: &UInt256 ) -> Result<Option<Cell>> {
-    //     match self {
-    //         RpcClient::Jrpc(client) =>
-    //     }
-    // }
+    pub async fn get_library_cell(&self, hash: &UInt256) -> Result<Option<Cell>> {
+        match self {
+            RpcClient::Jrpc(client) => client.get_library_cell(hash).await,
+            RpcClient::Proto(client) => client.get_library_cell(hash).await,
+        }
+    }
 
     pub async fn get_contract_state(
         &self,
