@@ -2,9 +2,7 @@ use nekoton_utils::*;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use serde::de::{self, MapAccess, Visitor};
 use serde::Deserializer;
-use std::fmt;
 
 pub trait Request: Serialize {
     type ResponseContainer: DeserializeOwned;
@@ -401,9 +399,11 @@ impl Request for GetTimingsRequest {
 #[derive(Debug, Copy, Clone, Serialize, Default, Eq, PartialEq)]
 pub struct GetTimingsResponse {
     pub last_mc_block_seqno: u32,
+    #[serde(default)]
     pub last_shard_client_mc_block_seqno: u32,
     pub last_mc_utime: u32,
     pub mc_time_diff: i64,
+    #[serde(default)]
     pub shard_client_time_diff: i64,
     pub smallest_known_lt: Option<u64>,
 }
@@ -413,149 +413,34 @@ impl<'de> Deserialize<'de> for GetTimingsResponse {
     where
         D: Deserializer<'de>,
     {
-        enum Field {
-            LastMcBlockSeqno,
-            LastShardClientMcBlockSeqno,
-            LastMcUtime,
-            McTimeDiff,
-            ShardClientTimeDiff,
-            SmallestKnownLt,
+        #[derive(Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        struct WhoTheFuckIsMisterBackwardsCompatible {
+            #[serde(alias = "lastMcBlockSeqno")]
+            last_mc_block_seqno: u32,
+            #[serde(alias = "lastShardClientMcBlockSeqno", default)]
+            last_shard_client_mc_block_seqno: Option<u32>,
+            #[serde(alias = "lastMcUtime")]
+            last_mc_utime: u32,
+            #[serde(alias = "mcTimeDiff")]
+            mc_time_diff: i64,
+            #[serde(alias = "shardClientTimeDiff", default)]
+            shard_client_time_diff: Option<i64>,
+            #[serde(alias = "smallestKnownLt")]
+            smallest_known_lt: Option<u64>,
         }
 
-        impl<'de> Deserialize<'de> for Field {
-            fn deserialize<D>(deserializer: D) -> Result<Field, D::Error>
-            where
-                D: Deserializer<'de>,
-            {
-                struct FieldVisitor;
-
-                impl<'de> Visitor<'de> for FieldVisitor {
-                    type Value = Field;
-
-                    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                        formatter.write_str("field identifier")
-                    }
-
-                    fn visit_str<E>(self, value: &str) -> Result<Field, E>
-                    where
-                        E: de::Error,
-                    {
-                        match value {
-                            "last_mc_block_seqno" | "lastMcBlockSeqno" => {
-                                Ok(Field::LastMcBlockSeqno)
-                            }
-                            "last_shard_client_mc_block_seqno" | "lastShardClientMcBlockSeqno" => {
-                                Ok(Field::LastShardClientMcBlockSeqno)
-                            }
-                            "last_mc_utime" | "lastMcUtime" => Ok(Field::LastMcUtime),
-                            "mc_time_diff" | "mcTimeDiff" => Ok(Field::McTimeDiff),
-                            "shard_client_time_diff" | "shardClientTimeDiff" => {
-                                Ok(Field::ShardClientTimeDiff)
-                            }
-                            "smallest_known_lt" | "smallestKnownLt" => Ok(Field::SmallestKnownLt),
-                            _ => Err(de::Error::unknown_field(value, FIELDS)),
-                        }
-                    }
-                }
-
-                deserializer.deserialize_identifier(FieldVisitor)
-            }
-        }
-
-        struct GetTimingsResponseVisitor;
-
-        impl<'de> Visitor<'de> for GetTimingsResponseVisitor {
-            type Value = GetTimingsResponse;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("struct GetTimingsResponse")
-            }
-
-            fn visit_map<V>(self, mut map: V) -> Result<GetTimingsResponse, V::Error>
-            where
-                V: MapAccess<'de>,
-            {
-                let mut last_mc_block_seqno = None;
-                let mut last_shard_client_mc_block_seqno = None;
-                let mut last_mc_utime = None;
-                let mut mc_time_diff = None;
-                let mut shard_client_time_diff = None;
-                let mut smallest_known_lt = None;
-
-                while let Some(key) = map.next_key()? {
-                    match key {
-                        Field::LastMcBlockSeqno => {
-                            if last_mc_block_seqno.is_some() {
-                                return Err(de::Error::duplicate_field("last_mc_block_seqno"));
-                            }
-                            last_mc_block_seqno = Some(map.next_value()?);
-                        }
-                        Field::LastShardClientMcBlockSeqno => {
-                            if last_shard_client_mc_block_seqno.is_some() {
-                                return Err(de::Error::duplicate_field(
-                                    "last_shard_client_mc_block_seqno",
-                                ));
-                            }
-                            last_shard_client_mc_block_seqno = Some(map.next_value()?);
-                        }
-                        Field::LastMcUtime => {
-                            if last_mc_utime.is_some() {
-                                return Err(de::Error::duplicate_field("last_mc_utime"));
-                            }
-                            last_mc_utime = Some(map.next_value()?);
-                        }
-                        Field::McTimeDiff => {
-                            if mc_time_diff.is_some() {
-                                return Err(de::Error::duplicate_field("mc_time_diff"));
-                            }
-                            mc_time_diff = Some(map.next_value()?);
-                        }
-                        Field::ShardClientTimeDiff => {
-                            if shard_client_time_diff.is_some() {
-                                return Err(de::Error::duplicate_field("shard_client_time_diff"));
-                            }
-                            shard_client_time_diff = Some(map.next_value()?);
-                        }
-                        Field::SmallestKnownLt => {
-                            if smallest_known_lt.is_some() {
-                                return Err(de::Error::duplicate_field("smallest_known_lt"));
-                            }
-                            smallest_known_lt = map.next_value()?;
-                        }
-                    }
-                }
-
-                let last_mc_block_seqno = last_mc_block_seqno
-                    .ok_or_else(|| de::Error::missing_field("last_mc_block_seqno"))?;
-                let last_shard_client_mc_block_seqno =
-                    last_shard_client_mc_block_seqno.unwrap_or(last_mc_block_seqno);
-                let last_mc_utime =
-                    last_mc_utime.ok_or_else(|| de::Error::missing_field("last_mc_utime"))?;
-                let mc_time_diff =
-                    mc_time_diff.ok_or_else(|| de::Error::missing_field("mc_time_diff"))?;
-                let shard_client_time_diff = shard_client_time_diff.unwrap_or(mc_time_diff);
-
-                Ok(GetTimingsResponse {
-                    last_mc_block_seqno,
-                    last_shard_client_mc_block_seqno,
-                    last_mc_utime,
-                    mc_time_diff,
-                    shard_client_time_diff,
-                    smallest_known_lt,
-                })
-            }
-        }
-
-        const FIELDS: &[&str] = &[
-            "last_mc_block_seqno",
-            "last_shard_client_mc_block_seqno",
-            "last_mc_utime",
-            "mc_time_diff",
-            "shard_client_time_diff",
-            "smallest_known_lt",
-        ];
-
-        deserializer.deserialize_struct("GetTimingsResponse", FIELDS, GetTimingsResponseVisitor)
+        let fu = WhoTheFuckIsMisterBackwardsCompatible::deserialize(deserializer)?;
+        Ok(Self {
+            last_mc_block_seqno: fu.last_mc_block_seqno,
+            last_shard_client_mc_block_seqno: fu
+                .last_shard_client_mc_block_seqno
+                .unwrap_or(fu.last_mc_block_seqno),
+            last_mc_utime: fu.last_mc_utime,
+            mc_time_diff: fu.mc_time_diff,
+            shard_client_time_diff: fu.shard_client_time_diff.unwrap_or(fu.mc_time_diff),
+            smallest_known_lt: fu.smallest_known_lt,
+        })
     }
 }
 
