@@ -14,9 +14,9 @@ tracing = "0.1.37"
 
 ton_block = { git = "https://github.com/broxus/ton-labs-block.git" }
 
-nekoton-abi = { git = "https://github.com/broxus/nekoton.git", default-features = false }
-nekoton-proto = { git = "https://github.com/broxus/nekoton.git", default-features = false }
-nekoton-utils = { git = "https://github.com/broxus/nekoton.git", default-features = false }
+nekoton-abi = { git = "https://github.com/broxus/nekoton.git",branch = "feature/rpc-lib-support", default-features = false }
+nekoton-proto = { git = "https://github.com/broxus/nekoton.git",branch = "feature/rpc-lib-support", default-features = false }
+nekoton-utils = { git = "https://github.com/broxus/nekoton.git",branch = "feature/rpc-lib-support", default-features = false }
 
 [dev-dependencies]
 serde_json = "1.0.121"

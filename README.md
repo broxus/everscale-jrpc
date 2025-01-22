@@ -26,6 +26,7 @@ for the Everscale/Venom blockchains.
 - [`getStatus`](#getstatus)
 - [`getTimings`](#gettimings)
 - [`getContractState`](#getcontractstate)
+- [`getLibraryCell`](#getlibrarycell)
 - [`sendMessage`](#sendmessage)
 - [`getTransactionsList`](#gettransactionslist)
 - [`getTransaction`](#gettransaction)
@@ -311,6 +312,35 @@ Returns node state timings.
   }
   ```
 </details>
+
+---
+
+### `getLibraryCell`
+
+Retrieves library cell by its representation hash.
+
+**Request:**
+```typescript
+{
+  "jsonrpc": "2.0",
+  "id": number, // Request id
+  "method": "getLibraryCell",
+  "params": {
+    "hash": string // hex encoded 32 bytes of cell representation hash
+  }
+}
+```
+
+**Response:**
+```typescript
+{
+  "jsonrpc": "2.0",
+  "id": number, // Request id
+  "result": {
+    "cell": string, // Base64 encoded boc
+  }
+}
+```
 
 ---
 

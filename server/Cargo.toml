@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0"
+ahash = "0.8.11"
 arc-swap = { version = "1.6", features = ["weak"] }
 axum = { version = "0.6.0", features = ["http2", "ws"] }
 axum-jrpc = { version = "0.5.1", features = ["serde_json"] }
@@ -16,6 +17,7 @@ fdlimit = "0.3.0"
 futures-util = "0.3"
 hex = "0.4"
 humantime = "2.1"
+moka = { version = "0.12.10", features = ["sync"] }
 num_cpus = "1.13.1"
 parking_lot = { version = "0.12.0", features = ["hardware-lock-elision"] }
 rlimit = "0.10.1"
@@ -30,8 +32,8 @@ metrics = "0.22.0"
 uuid = { version = "1.6", features = ["v4", "serde"] }
 weedb = { version = "0.2.5", features = ["zstd", "lz4", "jemalloc"] }
 
-nekoton-abi = { git = "https://github.com/broxus/nekoton.git", default-features = false }
-nekoton-proto = { git = "https://github.com/broxus/nekoton.git", default-features = false }
+nekoton-abi = { git = "https://github.com/broxus/nekoton.git", branch = "feature/rpc-lib-support", default-features = false }
+nekoton-proto = { git = "https://github.com/broxus/nekoton.git", branch = "feature/rpc-lib-support", default-features = false }
 
 ton-indexer = { git = "https://github.com/broxus/ton-indexer.git" }
 ton_block = { git = "https://github.com/broxus/ton-labs-block.git" }

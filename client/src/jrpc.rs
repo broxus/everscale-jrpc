@@ -85,6 +85,25 @@ where
         Ok(Some(result))
     }
 
+    async fn get_library_cell(&self, hash: &UInt256) -> Result<Option<Cell>> {
+        let params = &jrpc::GetLibraryCellRequest { hash: hash.inner() };
+        let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
+            method: "getLibraryCell",
+            params,
+        });
+
+        match self.request(&request).await?.into_inner() {
+            jrpc::GetLibraryCellResponse {
+                cell: Some(base64_cell),
+            } => {
+                let bytes = base64::decode(base64_cell)?;
+                let cell = ton_types::deserialize_tree_of_cells(&mut bytes.as_ref())?;
+                Ok(Some(cell))
+            }
+            jrpc::GetLibraryCellResponse { cell: None } => Ok(None),
+        }
+    }
+
     async fn get_contract_state(
         &self,
         address: &MsgAddressInt,
