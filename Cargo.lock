@@ -1026,7 +1026,6 @@ dependencies = [
  "ahash",
  "anyhow",
  "arc-swap",
- "async-trait",
  "axum",
  "axum-jrpc",
  "base64 0.13.1",
@@ -2059,7 +2058,7 @@ dependencies = [
 [[package]]
 name = "nekoton"
 version = "0.13.1"
-source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Frpc-lib-support#2081bf4bb968e16b2bea59f6fd3b0f4958105dd2"
+source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2102,7 +2101,7 @@ dependencies = [
 [[package]]
 name = "nekoton-abi"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Frpc-lib-support#2081bf4bb968e16b2bea59f6fd3b0f4958105dd2"
+source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
 dependencies = [
  "anyhow",
  "base64 0.13.1",
@@ -2129,7 +2128,7 @@ dependencies = [
 [[package]]
 name = "nekoton-contracts"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Frpc-lib-support#2081bf4bb968e16b2bea59f6fd3b0f4958105dd2"
+source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
 dependencies = [
  "anyhow",
  "nekoton-abi",
@@ -2146,7 +2145,7 @@ dependencies = [
 [[package]]
 name = "nekoton-derive"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Frpc-lib-support#2081bf4bb968e16b2bea59f6fd3b0f4958105dd2"
+source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
 dependencies = [
  "either",
  "proc-macro2",
@@ -2157,7 +2156,7 @@ dependencies = [
 [[package]]
 name = "nekoton-jetton"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Frpc-lib-support#2081bf4bb968e16b2bea59f6fd3b0f4958105dd2"
+source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
 dependencies = [
  "anyhow",
  "lazy_static",
@@ -2174,7 +2173,7 @@ dependencies = [
 [[package]]
 name = "nekoton-proto"
 version = "0.1.0"
-source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Frpc-lib-support#2081bf4bb968e16b2bea59f6fd3b0f4958105dd2"
+source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
 dependencies = [
  "anyhow",
  "nekoton-abi",
@@ -2186,7 +2185,7 @@ dependencies = [
 [[package]]
 name = "nekoton-utils"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Frpc-lib-support#2081bf4bb968e16b2bea59f6fd3b0f4958105dd2"
+source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
 dependencies = [
  "anyhow",
  "base64 0.13.1",

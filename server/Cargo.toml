@@ -32,8 +32,8 @@ metrics = "0.22.0"
 uuid = { version = "1.6", features = ["v4", "serde"] }
 weedb = { version = "0.2.5", features = ["zstd", "lz4", "jemalloc"] }
 
-nekoton-abi = { git = "https://github.com/broxus/nekoton.git", branch = "feature/rpc-lib-support", default-features = false }
-nekoton-proto = { git = "https://github.com/broxus/nekoton.git", branch = "feature/rpc-lib-support", default-features = false }
+nekoton-abi = { git = "https://github.com/broxus/nekoton.git", default-features = false }
+nekoton-proto = { git = "https://github.com/broxus/nekoton.git", default-features = false }
 
 ton-indexer = { git = "https://github.com/broxus/ton-indexer.git" }
 ton_block = { git = "https://github.com/broxus/ton-labs-block.git" }
@@ -44,7 +44,6 @@ everscale-rpc-models = { path = "../models" }
 [dev-dependencies]
 hex = "0.4"
 tokio = { version = "1", features = ["rt"] }
-async-trait = "0.1.58"
 
 [features]
 default = ["compression"]
