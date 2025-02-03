@@ -1,8 +1,9 @@
-use std::borrow::Cow;
-use ton_block::MsgAddressInt;
-
 use crate::jrpc::JrpcError;
 use crate::proto::ProtoError;
+use bytes::Bytes;
+use std::borrow::Cow;
+use ton_block::MsgAddressInt;
+use ton_types::UInt256;
 
 macro_rules! define_query_error {
     ($ident:ident, { $($variant:ident => ($code:literal, $name:literal)),*$(,)? }) => {
@@ -62,4 +63,8 @@ pub fn extract_address(address: &MsgAddressInt, target: &mut [u8]) -> QueryResul
     }
 
     Err(QueryError::InvalidParams)
+}
+
+pub fn hash_from_bytes(bytes: Bytes) -> Option<UInt256> {
+    (bytes.len() == 32).then(|| UInt256::from_slice(&bytes))
 }

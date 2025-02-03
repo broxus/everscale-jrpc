@@ -9,9 +9,9 @@ use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
-use ton_block::{Deserializable, HashmapAugType};
+use ton_block::{Deserializable, HashmapAugType, Libraries};
 use ton_indexer::utils::{RefMcStateHandle, ShardStateStuff};
-use ton_types::{HashmapType, UInt256};
+use ton_types::{Cell, HashmapType, UInt256};
 use weedb::{rocksdb, Caches, Migrations, Semver, Table, WeeDb};
 
 use crate::{PersistentStorageConfig, TransactionsGcOptions};
@@ -51,9 +51,11 @@ impl RuntimeStorage {
         shard_state: &ShardStateStuff,
     ) -> Result<()> {
         let accounts = shard_state.state().read_accounts()?;
+        let libraries = shard_state.state().libraries().clone();
         let state_handle = shard_state.ref_mc_state_handle().clone();
 
         let shard_accounts = ShardAccounts {
+            libraries,
             accounts,
             state_handle,
             gen_utime: block_info.gen_utime().as_u32(),
@@ -102,6 +104,19 @@ impl RuntimeStorage {
         }
 
         Ok(())
+    }
+
+    pub fn get_library_cell(&self, hash: &UInt256) -> Result<Option<Cell>> {
+        let state = self.masterchain_accounts_cache.read();
+        let lib = match &*state {
+            None => {
+                tracing::warn!("masterchain_accounts_cache is not ready");
+                None
+            }
+            Some(accounts) => accounts.libraries.get(hash)?,
+        };
+
+        Ok(lib.map(|x| x.lib().clone()))
     }
 
     pub fn get_contract_state(
@@ -164,6 +179,7 @@ pub struct ShardAccount {
 }
 
 struct ShardAccounts {
+    libraries: Libraries,
     accounts: ton_block::ShardAccounts,
     state_handle: Arc<RefMcStateHandle>,
     gen_utime: u32,

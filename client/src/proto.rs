@@ -15,6 +15,7 @@ use ton_types::UInt256;
 
 use everscale_rpc_models::proto::ProtoAnswer;
 use everscale_rpc_models::Timings;
+use nekoton_proto::prost::bytes::Bytes;
 use nekoton_proto::prost::{bytes, Message};
 use nekoton_proto::protos::rpc;
 use nekoton_proto::utils;
@@ -94,6 +95,33 @@ where
             },
             _ => Err(ClientError::InvalidResponse.into()),
         }
+    }
+
+    async fn get_library_cell(&self, hash: &UInt256) -> Result<Option<Cell>> {
+        let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
+            call: Some(rpc::request::Call::GetLibraryCell(
+                rpc::request::GetLibraryCell {
+                    hash: Bytes::copy_from_slice(hash.as_slice()),
+                },
+            )),
+        });
+
+        let result = self
+            .request(&request)
+            .await?
+            .into_inner()
+            .result
+            .ok_or::<RunError>(ClientError::InvalidResponse.into())?;
+
+        let result = match result {
+            rpc::response::Result::GetLibraryCell(response) => match response.cell {
+                Some(bytes) => Some(ton_types::deserialize_tree_of_cells(&mut bytes.as_ref())?),
+                None => None,
+            },
+            _ => None,
+        };
+
+        Ok(result)
     }
 
     async fn get_contract_state(
@@ -544,7 +572,6 @@ impl Connection for ProtoConnection {
                     let is_reliable = t.is_reliable(
                         params.mc_acceptable_time_diff_sec,
                         params.sc_acceptable_time_diff_sec,
-                        params.acceptable_blocks_diff,
                     );
                     if !is_reliable {
                         let Timings {

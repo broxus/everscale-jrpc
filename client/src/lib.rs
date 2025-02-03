@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use everscale_rpc_models::Timings;
 use futures::StreamExt;
 use itertools::Itertools;
 use nekoton::transport::models::ExistingContract;
@@ -20,8 +21,7 @@ use reqwest::header::CONTENT_TYPE;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use ton_block::{GetRepresentationHash, MsgAddressInt, Transaction};
-
-use everscale_rpc_models::Timings;
+use ton_types::{Cell, UInt256};
 
 use crate::jrpc::{JrpcClient, JrpcRequest};
 use crate::proto::ProtoClient;
@@ -131,6 +131,13 @@ impl RpcClient {
                     .get_transactions(limit, account, last_transaction_lt)
                     .await
             }
+        }
+    }
+
+    pub async fn get_library_cell(&self, hash: &UInt256) -> Result<Option<Cell>> {
+        match self {
+            RpcClient::Jrpc(client) => client.get_library_cell(hash).await,
+            RpcClient::Proto(client) => client.get_library_cell(hash).await,
         }
     }
 
@@ -556,6 +563,7 @@ where
     ) -> Result<Vec<Transaction>>;
 
     async fn get_keyblock(&self) -> Result<ton_block::Block>;
+    async fn get_library_cell(&self, hash: &UInt256) -> Result<Option<Cell>>;
 }
 
 #[async_trait::async_trait]
@@ -622,7 +630,6 @@ pub trait Connection: Send + Sync {
 pub struct ReliabilityParams {
     pub mc_acceptable_time_diff_sec: u64,
     pub sc_acceptable_time_diff_sec: u64,
-    pub acceptable_blocks_diff: u32,
 }
 
 pub enum RpcRequest<'a, T> {
@@ -737,7 +744,6 @@ impl Default for ClientOptions {
             reliability_params: ReliabilityParams {
                 mc_acceptable_time_diff_sec: 120,
                 sc_acceptable_time_diff_sec: 120,
-                acceptable_blocks_diff: 500,
             },
         }
     }
@@ -787,7 +793,6 @@ impl LiveCheckResult {
             LiveCheckResult::Live(metrics) => metrics.is_reliable(
                 reliability_params.mc_acceptable_time_diff_sec,
                 reliability_params.sc_acceptable_time_diff_sec,
-                reliability_params.acceptable_blocks_diff,
             ),
             LiveCheckResult::Dummy => true,
             LiveCheckResult::Dead => false,

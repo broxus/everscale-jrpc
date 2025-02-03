@@ -21,12 +21,7 @@ pub struct Timings {
 }
 
 impl Timings {
-    pub fn is_reliable(
-        &self,
-        mc_acceptable_time_diff: u64,
-        sc_acceptable_time_diff: u64,
-        acceptable_blocks_diff: u32,
-    ) -> bool {
+    pub fn is_reliable(&self, mc_acceptable_time_diff: u64, sc_acceptable_time_diff: u64) -> bool {
         // just booted up
         if self == &Self::default() {
             return false;
@@ -34,8 +29,6 @@ impl Timings {
 
         self.mc_time_diff.unsigned_abs() < mc_acceptable_time_diff
             && self.shard_client_time_diff.unsigned_abs() < sc_acceptable_time_diff
-            && self.last_mc_block_seqno - self.last_shard_client_mc_block_seqno
-                < acceptable_blocks_diff
     }
 
     pub fn has_state_for(&self, time: u32) -> bool {
@@ -98,23 +91,22 @@ mod test {
     fn reliable() {
         let metrics = Timings {
             last_mc_block_seqno: 100,
-            last_shard_client_mc_block_seqno: 91,
+            last_shard_client_mc_block_seqno: 0,
             last_mc_utime: 100,
             mc_time_diff: 0,
             shard_client_time_diff: 0,
             smallest_known_lt: None,
         };
-
-        assert!(!metrics.is_reliable(120, 120, 8));
+        assert!(!metrics.is_reliable(0, 0));
 
         let metrics = Timings {
             last_mc_block_seqno: 100,
-            last_shard_client_mc_block_seqno: 83,
+            last_shard_client_mc_block_seqno: 0,
             last_mc_utime: 100,
             mc_time_diff: 150,
-            shard_client_time_diff: 130,
+            shard_client_time_diff: 0,
             smallest_known_lt: None,
         };
-        assert!(!metrics.is_reliable(60, 60, 1000));
+        assert!(!metrics.is_reliable(0, 0));
     }
 }

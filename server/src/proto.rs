@@ -2,6 +2,10 @@ use std::borrow::Cow;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use crate::server::Server;
+use crate::storage::ShardAccountFromCache;
+use crate::utils::{hash_from_bytes, QueryError, QueryResult};
+use crate::{Counters, RpcState};
 use anyhow::{Context, Result};
 use arc_swap::ArcSwapOption;
 use axum::extract::State;
@@ -11,19 +15,17 @@ use bytes::Bytes;
 use everscale_rpc_models::proto::Protobuf;
 use nekoton_abi::LastTransactionId;
 use nekoton_proto::protos::rpc;
+use nekoton_proto::protos::rpc::response::GetLibraryCell;
 use serde::Serialize;
 use ton_block::{Deserializable, Serializable};
-
-use crate::server::Server;
-use crate::storage::ShardAccountFromCache;
-use crate::utils::{QueryError, QueryResult};
-use crate::{Counters, RpcState};
+use ton_types::UInt256;
 
 pub struct ProtoServer {
     state: Arc<RpcState>,
     capabilities_response: rpc::response::GetCapabilities,
     key_block_response: Arc<ArcSwapOption<rpc::response::GetLatestKeyBlock>>,
     config_response: Arc<ArcSwapOption<rpc::response::GetBlockchainConfig>>,
+    library_cache: moka::sync::Cache<UInt256, Bytes, ahash::RandomState>,
 }
 
 impl ProtoServer {
@@ -36,6 +38,7 @@ impl ProtoServer {
                 "getBlockchainConfig",
                 "getStatus",
                 "getTimings",
+                "getLibraryCell",
                 "getContractState",
                 "sendMessage",
             ];
@@ -75,7 +78,7 @@ impl ProtoServer {
             let config_response = rpc::response::GetBlockchainConfig {
                 global_id: block.global_id,
                 config: Bytes::from(config.write_to_bytes()?),
-                seqno: Some(seqno),
+                seqno,
             };
 
             Ok((Arc::new(key_block_response), Arc::new(config_response)))
@@ -127,6 +130,9 @@ impl ProtoServer {
             capabilities_response,
             key_block_response,
             config_response,
+            library_cache: moka::sync::Cache::builder()
+                .max_capacity(100)
+                .build_with_hasher(Default::default()),
         }))
     }
 }
@@ -183,6 +189,9 @@ pub async fn proto_router(
             }
             rpc::request::Call::GetStatus(()) => req.fill(ctx.proto().get_status()),
             rpc::request::Call::GetTimings(()) => req.fill(ctx.proto().get_timings()),
+            rpc::request::Call::GetLibraryCell(param) => {
+                req.fill(ctx.proto().get_library_cell(param))
+            }
             rpc::request::Call::GetContractState(param) => {
                 req.fill(ctx.proto().get_contract_state(param))
             }
@@ -259,6 +268,41 @@ impl ProtoServer {
                     .unwrap_or(u64::MAX),
             },
         ))
+    }
+
+    fn get_library_cell(
+        &self,
+        req: rpc::request::GetLibraryCell,
+    ) -> QueryResult<rpc::response::Result> {
+        let Some(hash) = hash_from_bytes(req.hash) else {
+            tracing::error!("Invalid hash");
+            return Err(QueryError::InvalidParams);
+        };
+
+        let cell_opt = match self.library_cache.get(&hash) {
+            Some(cell_boc) => Some(cell_boc),
+            None => {
+                match self
+                    .state
+                    .runtime_storage
+                    .get_library_cell(&hash)
+                    .map_err(|_| QueryError::StorageError)?
+                {
+                    Some(cell) => {
+                        let bytes = ton_types::serialize_toc(&cell)
+                            .map_err(|_| QueryError::StorageError)?;
+                        let bytes: Bytes = bytes.into();
+                        self.library_cache.insert(hash, bytes.clone());
+                        Some(bytes)
+                    }
+                    None => None,
+                }
+            }
+        };
+
+        Ok(rpc::response::Result::GetLibraryCell(GetLibraryCell {
+            cell: cell_opt,
+        }))
     }
 
     fn get_contract_state(
