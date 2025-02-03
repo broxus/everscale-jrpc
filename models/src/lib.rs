@@ -21,12 +21,7 @@ pub struct Timings {
 }
 
 impl Timings {
-    pub fn is_reliable(
-        &self,
-        mc_acceptable_time_diff: u64,
-        sc_acceptable_time_diff: u64,
-        _acceptable_blocks_diff: u32,
-    ) -> bool {
+    pub fn is_reliable(&self, mc_acceptable_time_diff: u64, sc_acceptable_time_diff: u64) -> bool {
         // just booted up
         if self == &Self::default() {
             return false;
@@ -102,7 +97,7 @@ mod test {
             shard_client_time_diff: 0,
             smallest_known_lt: None,
         };
-        assert!(!metrics.is_reliable(0, 0, 0));
+        assert!(!metrics.is_reliable(0, 0));
 
         let metrics = Timings {
             last_mc_block_seqno: 100,
@@ -112,6 +107,6 @@ mod test {
             shard_client_time_diff: 0,
             smallest_known_lt: None,
         };
-        assert!(!metrics.is_reliable(0, 0, 0));
+        assert!(!metrics.is_reliable(0, 0));
     }
 }

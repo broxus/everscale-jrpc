@@ -498,7 +498,6 @@ impl Connection for JrpcConnection {
                     let is_reliable = t.is_reliable(
                         params.mc_acceptable_time_diff_sec,
                         params.sc_acceptable_time_diff_sec,
-                        params.acceptable_blocks_diff,
                     );
                     if !is_reliable {
                         let Timings {

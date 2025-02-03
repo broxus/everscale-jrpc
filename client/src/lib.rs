@@ -630,7 +630,6 @@ pub trait Connection: Send + Sync {
 pub struct ReliabilityParams {
     pub mc_acceptable_time_diff_sec: u64,
     pub sc_acceptable_time_diff_sec: u64,
-    pub acceptable_blocks_diff: u32,
 }
 
 pub enum RpcRequest<'a, T> {
@@ -745,7 +744,6 @@ impl Default for ClientOptions {
             reliability_params: ReliabilityParams {
                 mc_acceptable_time_diff_sec: 120,
                 sc_acceptable_time_diff_sec: 120,
-                acceptable_blocks_diff: 500,
             },
         }
     }
@@ -795,7 +793,6 @@ impl LiveCheckResult {
             LiveCheckResult::Live(metrics) => metrics.is_reliable(
                 reliability_params.mc_acceptable_time_diff_sec,
                 reliability_params.sc_acceptable_time_diff_sec,
-                reliability_params.acceptable_blocks_diff,
             ),
             LiveCheckResult::Dummy => true,
             LiveCheckResult::Dead => false,

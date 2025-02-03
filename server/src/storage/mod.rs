@@ -112,7 +112,7 @@ impl RuntimeStorage {
             None => {
                 tracing::warn!("masterchain_accounts_cache is not ready");
                 None
-            },
+            }
             Some(accounts) => accounts.libraries.get(hash)?,
         };
 
