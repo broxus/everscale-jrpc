@@ -8,6 +8,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::jrpc::{JrpcClient, JrpcRequest};
+use crate::proto::ProtoClient;
 use anyhow::{Context, Result};
 use everscale_rpc_models::{BlockId, KeyBlockProof, Timings};
 use futures::StreamExt;
@@ -22,8 +24,6 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use ton_block::{GetRepresentationHash, MsgAddressInt, Transaction};
 use ton_types::{Cell, UInt256};
-use crate::jrpc::{JrpcClient, JrpcRequest};
-use crate::proto::ProtoClient;
 
 pub mod jrpc;
 pub mod proto;

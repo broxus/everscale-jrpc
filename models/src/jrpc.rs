@@ -33,7 +33,6 @@ pub struct JrpcGetTransactionBlockIdRequest {
     pub id: [u8; 32],
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JrpcBlockIdResponse {
@@ -50,7 +49,6 @@ impl Request for JrpcGetTransactionBlockIdRequest {
     type ResponseContainer = Self::Response;
     type Response = JrpcBlockIdResponse;
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -8,11 +8,13 @@ use anyhow::{Context, Result};
 use nekoton::transport::models::ExistingContract;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use ton_block::{Block, CommonMsgInfo, Deserializable, Message, MsgAddressInt, ShardIdent, Transaction};
+use ton_block::{
+    Block, CommonMsgInfo, Deserializable, Message, MsgAddressInt, ShardIdent, Transaction,
+};
 use ton_types::{deserialize_tree_of_cells, UInt256};
 
-use everscale_rpc_models::{jrpc, Signature, Timings};
 use crate::*;
+use everscale_rpc_models::{jrpc, Signature, Timings};
 
 pub type JrpcClient = JrpcClientImpl<JrpcConnection>;
 
@@ -104,17 +106,15 @@ where
     }
 
     async fn get_key_block_proof(&self, seqno: u32) -> Result<Option<KeyBlockProof>> {
-        let params = &jrpc::GetKeyBlockProofRequest {seqno};
+        let params = &jrpc::GetKeyBlockProofRequest { seqno };
         let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
             method: "getKeyBlockProof",
             params,
         });
 
         match self.request(&request).await?.into_inner() {
-            jrpc::JrpcGetKeyBlockProofResponse {
-                proof: Some(proof),
-            } => {
-                let bytes =  base64::decode(proof.proof)?;
+            jrpc::JrpcGetKeyBlockProofResponse { proof: Some(proof) } => {
+                let bytes = base64::decode(proof.proof)?;
                 let mut signatures = Vec::new();
                 for s in proof.signatures {
                     let mut sig = [0u8; 64];
@@ -123,12 +123,12 @@ where
 
                     signatures.push(Signature {
                         node_id: UInt256::from_slice(s.node_id.as_slice()),
-                        signature: sig
+                        signature: sig,
                     })
                 }
                 Ok(Some(KeyBlockProof {
                     proof: deserialize_tree_of_cells(&mut bytes.as_slice())?,
-                    signatures
+                    signatures,
                 }))
             }
             jrpc::JrpcGetKeyBlockProofResponse { proof: None } => Ok(None),
@@ -136,13 +136,17 @@ where
     }
 
     async fn get_transaction_block_id(&self, id: &UInt256) -> Result<Option<BlockId>> {
-        let params = &jrpc::JrpcGetTransactionBlockIdRequest {id: id.inner()};
+        let params = &jrpc::JrpcGetTransactionBlockIdRequest { id: id.inner() };
         let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
             method: "getTransactionBlockId",
             params,
         });
 
-        match self.request::<_, Option<jrpc::JrpcBlockIdResponse>>(&request).await?.into_inner() {
+        match self
+            .request::<_, Option<jrpc::JrpcBlockIdResponse>>(&request)
+            .await?
+            .into_inner()
+        {
             Some(s) => Ok(Some(BlockId {
                 shard: ShardIdent::with_tagged_prefix(s.workchain, s.shard.trim().parse()?)?,
                 seqno: s.seqno,
