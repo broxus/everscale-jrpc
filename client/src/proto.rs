@@ -8,13 +8,11 @@ use anyhow::Result;
 use nekoton::transport::models::ExistingContract;
 use parking_lot::Mutex;
 use reqwest::StatusCode;
-use ton_block::{
-    CommonMsgInfo, ConfigParams, Deserializable, MsgAddressInt, Serializable, Transaction,
-};
-use ton_types::UInt256;
+use ton_block::{CommonMsgInfo, ConfigParams, Deserializable, MsgAddressInt, Serializable, ShardIdent, Transaction};
+use ton_types::{deserialize_tree_of_cells, UInt256};
 
 use everscale_rpc_models::proto::ProtoAnswer;
-use everscale_rpc_models::Timings;
+use everscale_rpc_models::{Signature, Timings};
 use nekoton_proto::prost::bytes::Bytes;
 use nekoton_proto::prost::{bytes, Message};
 use nekoton_proto::protos::rpc;
@@ -121,6 +119,92 @@ where
             _ => None,
         };
 
+        Ok(result)
+    }
+
+    async fn get_key_block_proof(&self, seqno: u32) -> Result<Option<KeyBlockProof>> {
+        let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
+            call: Some(rpc::request::Call::GetKeyBlockProof(
+                rpc::request::GetKeyBlockProof {
+                    seqno,
+                },
+            )),
+        });
+
+        let result = self
+            .request(&request)
+            .await?
+            .into_inner()
+            .result
+            .ok_or::<RunError>(ClientError::InvalidResponse.into())?;
+
+        let result = match result {
+            rpc::response::Result::GetKeyBlockProof(response) => match response.proof {
+                Some(proof) => {
+
+                    let mut signatures = Vec::new();
+                    for s in proof.signatures {
+                        let mut sig = [0u8; 64];
+                        sig.copy_from_slice(s.signature.as_ref());
+
+                        signatures.push(Signature {
+                            node_id: UInt256::from_slice(s.node_id.as_ref()),
+                            signature: sig
+                        })
+                    }
+
+                    Some(KeyBlockProof {
+                        proof: deserialize_tree_of_cells(&mut proof.proof_boc.as_ref())?,
+                        signatures: vec![],
+                    })
+                },
+                None => None,
+            },
+            _ => None,
+        };
+
+        Ok(result)
+        
+    }
+
+    async fn get_transaction_block_id(&self, id: &UInt256) -> Result<Option<BlockId>> {
+        let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
+            call: Some(rpc::request::Call::GetTransactionBlockId(
+                rpc::request::GetTransaction {
+                    id: Bytes::copy_from_slice(id.as_slice()),
+                },
+            )),
+        });
+
+        let result = self
+            .request(&request)
+            .await?
+            .into_inner()
+            .result
+            .ok_or::<RunError>(ClientError::InvalidResponse.into())?;
+
+        let result = match result {
+            rpc::response::Result::GetTransactionBlockId(response) => match response.block_id {
+                Some(block_id) => {
+                    Some(BlockId {
+                        shard: ShardIdent::with_tagged_prefix(block_id.workchain, block_id.shard)?,
+                        seqno: block_id.seqno,
+                        root_hash: {
+                            let mut root_hash = [0u8;32];
+                            root_hash.copy_from_slice(block_id.root_hash.as_ref());
+                            root_hash
+                        },
+                        file_hash: {
+                            let mut file_hash = [0u8;32];
+                            file_hash.copy_from_slice(block_id.file_hash.as_ref());
+                            file_hash
+                        },
+                    })
+                },
+                None => None,
+            },
+            _ => None,
+        };
         Ok(result)
     }
 

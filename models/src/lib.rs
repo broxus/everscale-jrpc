@@ -1,7 +1,32 @@
 use std::time::SystemTime;
+use ton_block::ShardIdent;
+use ton_types::{Cell, UInt256};
 
 pub mod jrpc;
 pub mod proto;
+
+
+#[derive(Clone, Debug)]
+pub struct KeyBlockProof {
+    pub proof: Cell,
+    pub signatures: Vec<Signature>
+
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Signature {
+    pub node_id: UInt256,
+    pub signature: [u8; 64]
+}
+
+#[derive(Debug, Clone)]
+pub struct BlockId {
+    pub shard: ShardIdent,
+    pub seqno: u32,
+    pub root_hash: [u8; 32],
+    pub file_hash: [u8; 32],
+}
+
 
 pub fn now() -> u64 {
     SystemTime::now()

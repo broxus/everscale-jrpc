@@ -13,10 +13,11 @@ serde = { version = "1.0", features = ["derive"] }
 tracing = "0.1.37"
 
 ton_block = { git = "https://github.com/broxus/ton-labs-block.git" }
+ton_types = { git = "https://github.com/broxus/ton-labs-types" }
 
-nekoton-abi = { git = "https://github.com/broxus/nekoton.git", default-features = false }
-nekoton-proto = { git = "https://github.com/broxus/nekoton.git", default-features = false }
-nekoton-utils = { git = "https://github.com/broxus/nekoton.git", default-features = false }
+nekoton-abi = { git = "https://github.com/broxus/nekoton.git", branch = "feature/l2-methods", default-features = true }
+nekoton-proto = { git = "https://github.com/broxus/nekoton.git", branch = "feature/l2-methods", default-features = true }
+nekoton-utils = { git = "https://github.com/broxus/nekoton.git", branch = "feature/l2-methods", default-features = true }
 
 [dev-dependencies]
 serde_json = "1.0.121"

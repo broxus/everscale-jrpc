@@ -32,8 +32,8 @@ metrics = "0.22.0"
 uuid = { version = "1.6", features = ["v4", "serde"] }
 weedb = { version = "0.2.5", features = ["zstd", "lz4", "jemalloc"] }
 
-nekoton-abi = { git = "https://github.com/broxus/nekoton.git", default-features = false }
-nekoton-proto = { git = "https://github.com/broxus/nekoton.git", default-features = false }
+nekoton-abi = { git = "https://github.com/broxus/nekoton.git", branch = "feature/l2-methods", default-features = true }
+nekoton-proto = { git = "https://github.com/broxus/nekoton.git", branch = "feature/l2-methods", default-features = true }
 
 ton-indexer = { git = "https://github.com/broxus/ton-indexer.git" }
 ton_block = { git = "https://github.com/broxus/ton-labs-block.git" }

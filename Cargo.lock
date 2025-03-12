@@ -992,6 +992,7 @@ dependencies = [
  "serde",
  "serde_json",
  "ton_block",
+ "ton_types",
  "tracing",
 ]
 
@@ -2058,7 +2059,7 @@ dependencies = [
 [[package]]
 name = "nekoton"
 version = "0.13.1"
-source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
+source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Fl2-methods#4a1037cd635657c464f009615238e59b77e9dfbc"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2101,7 +2102,7 @@ dependencies = [
 [[package]]
 name = "nekoton-abi"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
+source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Fl2-methods#4a1037cd635657c464f009615238e59b77e9dfbc"
 dependencies = [
  "anyhow",
  "base64 0.13.1",
@@ -2122,13 +2123,13 @@ dependencies = [
  "ton_block",
  "ton_executor",
  "ton_types",
- "ton_vm 1.8.29 (git+https://github.com/broxus/ton-labs-vm.git?branch=feature%2Fjetton)",
+ "ton_vm",
 ]
 
 [[package]]
 name = "nekoton-contracts"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
+source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Fl2-methods#4a1037cd635657c464f009615238e59b77e9dfbc"
 dependencies = [
  "anyhow",
  "nekoton-abi",
@@ -2145,7 +2146,7 @@ dependencies = [
 [[package]]
 name = "nekoton-derive"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
+source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Fl2-methods#4a1037cd635657c464f009615238e59b77e9dfbc"
 dependencies = [
  "either",
  "proc-macro2",
@@ -2156,7 +2157,7 @@ dependencies = [
 [[package]]
 name = "nekoton-jetton"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
+source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Fl2-methods#4a1037cd635657c464f009615238e59b77e9dfbc"
 dependencies = [
  "anyhow",
  "lazy_static",
@@ -2173,7 +2174,7 @@ dependencies = [
 [[package]]
 name = "nekoton-proto"
 version = "0.1.0"
-source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
+source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Fl2-methods#4a1037cd635657c464f009615238e59b77e9dfbc"
 dependencies = [
  "anyhow",
  "nekoton-abi",
@@ -2185,7 +2186,7 @@ dependencies = [
 [[package]]
 name = "nekoton-utils"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git#f46db6a300f8bfb42aeb25707e6df20b9b87dea2"
+source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Fl2-methods#4a1037cd635657c464f009615238e59b77e9dfbc"
 dependencies = [
  "anyhow",
  "base64 0.13.1",
@@ -3647,7 +3648,7 @@ dependencies = [
  "thiserror",
  "ton_block",
  "ton_types",
- "ton_vm 1.8.29 (git+https://github.com/broxus/ton-labs-vm.git)",
+ "ton_vm",
 ]
 
 [[package]]
@@ -3670,27 +3671,6 @@ dependencies = [
  "sha2 0.9.9",
  "smallvec",
  "thiserror",
-]
-
-[[package]]
-name = "ton_vm"
-version = "1.8.29"
-source = "git+https://github.com/broxus/ton-labs-vm.git?branch=feature%2Fjetton#e4ccbb7a6e90fa30c7ee55b85f2b9ad8be1518d2"
-dependencies = [
- "anyhow",
- "ed25519",
- "ed25519-dalek 1.0.1 (git+https://github.com/broxus/ed25519-dalek.git)",
- "hex",
- "lazy_static",
- "log",
- "num",
- "num-traits",
- "rand 0.8.5",
- "sha2 0.9.9",
- "smallvec",
- "thiserror",
- "ton_block",
- "ton_types",
 ]
 
 [[package]]

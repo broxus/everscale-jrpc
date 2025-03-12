@@ -25,10 +25,10 @@ ton_types = { git = "https://github.com/broxus/ton-labs-types" }
 ton_executor = { git = "https://github.com/broxus/ton-labs-executor" }
 ton_block = { git = "https://github.com/broxus/ton-labs-block" }
 
-nekoton = { git = "https://github.com/broxus/nekoton.git", default-features = false }
-nekoton-abi = { git = "https://github.com/broxus/nekoton.git", default-features = false }
-nekoton-proto = { git = "https://github.com/broxus/nekoton.git", default-features = false }
-nekoton-utils = { git = "https://github.com/broxus/nekoton.git", default-features = false }
+nekoton = { git = "https://github.com/broxus/nekoton.git", branch = "feature/l2-methods", default-features = true }
+nekoton-abi = { git = "https://github.com/broxus/nekoton.git", branch = "feature/l2-methods", default-features = true }
+nekoton-proto = { git = "https://github.com/broxus/nekoton.git", branch = "feature/l2-methods", default-features = true }
+nekoton-utils = { git = "https://github.com/broxus/nekoton.git", branch = "feature/l2-methods", default-features = true }
 
 everscale-rpc-models = { path = "../models" }
 
@@ -36,7 +36,7 @@ everscale-rpc-models = { path = "../models" }
 ed25519-dalek = "1.0.1"
 hex = "0.4.3"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-nekoton = { git = "https://github.com/broxus/nekoton.git", default-features = true }
+nekoton = { git = "https://github.com/broxus/nekoton.git", branch = "feature/l2-methods", default-features = true }
 
 [features]
 default = ["log"]

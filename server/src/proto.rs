@@ -192,6 +192,12 @@ pub async fn proto_router(
             rpc::request::Call::GetLibraryCell(param) => {
                 req.fill(ctx.proto().get_library_cell(param))
             }
+            rpc::request::Call::GetKeyBlockProof(_) => {
+                todo!()
+            }
+            rpc::request::Call::GetTransactionBlockId(_) => {
+                todo!()
+            }
             rpc::request::Call::GetContractState(param) => {
                 req.fill(ctx.proto().get_contract_state(param))
             }

@@ -28,6 +28,64 @@ impl Request for GetLibraryCellRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct JrpcGetTransactionBlockIdRequest {
+    #[serde(with = "serde_hex_array")]
+    pub id: [u8; 32],
+}
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JrpcBlockIdResponse {
+    pub workchain: i32,
+    pub shard: String,
+    pub seqno: u32,
+    #[serde(with = "serde_hex_array")]
+    pub root_hash: [u8; 32],
+    #[serde(with = "serde_hex_array")]
+    pub file_hash: [u8; 32],
+}
+
+impl Request for JrpcGetTransactionBlockIdRequest {
+    type ResponseContainer = Self::Response;
+    type Response = JrpcBlockIdResponse;
+}
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetKeyBlockProofRequest {
+    pub seqno: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JrpcGetKeyBlockProofResponse {
+    pub proof: Option<JrpcKeyBlockProof>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JrpcKeyBlockProof {
+    pub proof: String,
+    pub signatures: Vec<JrpcBlockProofSignatures>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JrpcBlockProofSignatures {
+    #[serde(with = "serde_hex_array")]
+    pub node_id: [u8; 32],
+    pub signature: String,
+}
+
+impl Request for GetKeyBlockProofRequest {
+    type ResponseContainer = Self::Response;
+    type Response = JrpcGetKeyBlockProofResponse;
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GetContractStateRequest {
     /// Address as string
     #[serde(with = "serde_address")]
