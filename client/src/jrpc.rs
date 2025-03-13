@@ -15,6 +15,7 @@ use ton_types::{deserialize_tree_of_cells, UInt256};
 
 use crate::*;
 use everscale_rpc_models::{jrpc, Signature, Timings};
+use everscale_rpc_models::jrpc::JrpcKeyBlockProof;
 
 pub type JrpcClient = JrpcClientImpl<JrpcConnection>;
 
@@ -112,11 +113,11 @@ where
             params,
         });
 
-        match self.request(&request).await?.into_inner() {
-            jrpc::JrpcGetKeyBlockProofResponse { proof: Some(proof) } => {
-                let bytes = base64::decode(proof.proof)?;
+        match self.request::<_, Option<JrpcKeyBlockProof>>(&request).await?.into_inner() {
+            Some(s) => {
+                let bytes = base64::decode(s.proof)?;
                 let mut signatures = Vec::new();
-                for s in proof.signatures {
+                for s in s.signatures {
                     let mut sig = [0u8; 64];
                     let sig_bytes = base64::decode(&s.signature)?;
                     sig.copy_from_slice(sig_bytes.as_slice());
@@ -130,8 +131,8 @@ where
                     proof: deserialize_tree_of_cells(&mut bytes.as_slice())?,
                     signatures,
                 }))
-            }
-            jrpc::JrpcGetKeyBlockProofResponse { proof: None } => Ok(None),
+            },
+            None => Ok(None),
         }
     }
 

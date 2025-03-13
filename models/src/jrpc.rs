@@ -56,11 +56,6 @@ pub struct GetKeyBlockProofRequest {
     pub seqno: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct JrpcGetKeyBlockProofResponse {
-    pub proof: Option<JrpcKeyBlockProof>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -79,7 +74,7 @@ pub struct JrpcBlockProofSignatures {
 
 impl Request for GetKeyBlockProofRequest {
     type ResponseContainer = Self::Response;
-    type Response = JrpcGetKeyBlockProofResponse;
+    type Response = JrpcKeyBlockProof;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
