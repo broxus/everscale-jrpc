@@ -9,13 +9,13 @@ use nekoton::transport::models::ExistingContract;
 use parking_lot::Mutex;
 use reqwest::StatusCode;
 use ton_block::{
-    CommonMsgInfo, ConfigParams, Deserializable, MsgAddressInt, Serializable, ShardIdent,
-    Transaction,
+    BlockIdExt, CommonMsgInfo, ConfigParams, Deserializable, MsgAddressInt, Serializable,
+    ShardIdent, Transaction,
 };
-use ton_types::{deserialize_tree_of_cells, UInt256};
+use ton_types::UInt256;
 
 use everscale_rpc_models::proto::ProtoAnswer;
-use everscale_rpc_models::{Signature, Timings};
+use everscale_rpc_models::Timings;
 use nekoton_proto::prost::bytes::Bytes;
 use nekoton_proto::prost::{bytes, Message};
 use nekoton_proto::protos::rpc;
@@ -125,7 +125,7 @@ where
         Ok(result)
     }
 
-    async fn get_key_block_proof(&self, seqno: u32) -> Result<Option<KeyBlockProof>> {
+    async fn get_key_block_proof(&self, seqno: u32) -> Result<Option<BlockProof>> {
         let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
             call: Some(rpc::request::Call::GetKeyBlockProof(
                 rpc::request::GetKeyBlockProof { seqno },
@@ -141,23 +141,7 @@ where
 
         let result = match result {
             rpc::response::Result::GetKeyBlockProof(response) => match response.proof {
-                Some(proof) => {
-                    let mut signatures = Vec::new();
-                    for s in proof.signatures {
-                        let mut sig = [0u8; 64];
-                        sig.copy_from_slice(s.signature.as_ref());
-
-                        signatures.push(Signature {
-                            node_id: UInt256::from_slice(s.node_id.as_ref()),
-                            signature: sig,
-                        })
-                    }
-
-                    Some(KeyBlockProof {
-                        proof: deserialize_tree_of_cells(&mut proof.proof_boc.as_ref())?,
-                        signatures: vec![],
-                    })
-                }
+                Some(proof) => Some(BlockProof::construct_from_bytes(proof.as_ref())?),
                 None => None,
             },
             _ => None,
@@ -166,7 +150,7 @@ where
         Ok(result)
     }
 
-    async fn get_transaction_block_id(&self, id: &UInt256) -> Result<Option<BlockId>> {
+    async fn get_transaction_block_id(&self, id: &UInt256) -> Result<Option<BlockIdExt>> {
         let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
             call: Some(rpc::request::Call::GetTransactionBlockId(
                 rpc::request::GetTransaction {
@@ -184,24 +168,78 @@ where
 
         let result = match result {
             rpc::response::Result::GetTransactionBlockId(response) => match response.block_id {
-                Some(block_id) => Some(BlockId {
-                    shard: ShardIdent::with_tagged_prefix(block_id.workchain, block_id.shard)?,
-                    seqno: block_id.seqno,
-                    root_hash: {
-                        let mut root_hash = [0u8; 32];
-                        root_hash.copy_from_slice(block_id.root_hash.as_ref());
-                        root_hash
-                    },
-                    file_hash: {
-                        let mut file_hash = [0u8; 32];
-                        file_hash.copy_from_slice(block_id.file_hash.as_ref());
-                        file_hash
-                    },
-                }),
+                Some(block_id) => Some(BlockIdExt::with_params(
+                    ShardIdent::with_tagged_prefix(block_id.workchain, block_id.shard)?,
+                    block_id.seqno,
+                    UInt256::from_slice(block_id.root_hash.as_ref()),
+                    UInt256::from_slice(block_id.file_hash.as_ref()),
+                )),
                 None => None,
             },
             _ => None,
         };
+        Ok(result)
+    }
+
+    async fn get_block_proof(&self, block_id: BlockIdExt) -> Result<Option<BlockProof>> {
+        let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
+            call: Some(rpc::request::Call::GetBlockProof(
+                rpc::request::GetBlockData {
+                    block_id: Bytes::from(
+                        block_id
+                            .serialize()
+                            .and_then(|cell| ton_types::serialize_toc(&cell))?,
+                    ),
+                },
+            )),
+        });
+
+        let result = self
+            .request(&request)
+            .await?
+            .into_inner()
+            .result
+            .ok_or::<RunError>(ClientError::InvalidResponse.into())?;
+
+        let result = match result {
+            rpc::response::Result::GetBlockProof(response) => match response.proof {
+                Some(proof) => Some(BlockProof::construct_from_bytes(proof.as_ref())?),
+                None => None,
+            },
+            _ => None,
+        };
+
+        Ok(result)
+    }
+
+    async fn get_block_data(&self, block_id: BlockIdExt) -> Result<Option<Block>> {
+        let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
+            call: Some(rpc::request::Call::GetBlockData(
+                rpc::request::GetBlockData {
+                    block_id: Bytes::from(
+                        block_id
+                            .serialize()
+                            .and_then(|cell| ton_types::serialize_toc(&cell))?,
+                    ),
+                },
+            )),
+        });
+
+        let result = self
+            .request(&request)
+            .await?
+            .into_inner()
+            .result
+            .ok_or::<RunError>(ClientError::InvalidResponse.into())?;
+
+        let result = match result {
+            rpc::response::Result::GetBlockProof(response) => match response.proof {
+                Some(proof) => Some(Block::construct_from_bytes(proof.as_ref())?),
+                None => None,
+            },
+            _ => None,
+        };
+
         Ok(result)
     }
 

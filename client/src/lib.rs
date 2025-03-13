@@ -11,7 +11,7 @@ use std::time::Duration;
 use crate::jrpc::{JrpcClient, JrpcRequest};
 use crate::proto::ProtoClient;
 use anyhow::{Context, Result};
-use everscale_rpc_models::{BlockId, KeyBlockProof, Timings};
+use everscale_rpc_models::Timings;
 use futures::StreamExt;
 use itertools::Itertools;
 use nekoton::transport::models::ExistingContract;
@@ -22,7 +22,7 @@ use parking_lot::RwLock;
 use reqwest::header::CONTENT_TYPE;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use ton_block::{GetRepresentationHash, MsgAddressInt, Transaction};
+use ton_block::{Block, BlockProof, GetRepresentationHash, MsgAddressInt, Transaction};
 use ton_types::{Cell, UInt256};
 
 pub mod jrpc;
@@ -140,14 +140,17 @@ impl RpcClient {
         }
     }
 
-    pub async fn get_key_block_proof(&self, id: u32) -> Result<Option<KeyBlockProof>> {
+    pub async fn get_key_block_proof(&self, id: u32) -> Result<Option<BlockProof>> {
         match self {
             RpcClient::Jrpc(client) => client.get_key_block_proof(id).await,
             RpcClient::Proto(client) => client.get_key_block_proof(id).await,
         }
     }
 
-    pub async fn get_transaction_block_id(&self, hash: &UInt256) -> Result<Option<BlockId>> {
+    pub async fn get_transaction_block_id(
+        &self,
+        hash: &UInt256,
+    ) -> Result<Option<ton_block::BlockIdExt>> {
         match self {
             RpcClient::Jrpc(client) => client.get_transaction_block_id(hash).await,
             RpcClient::Proto(client) => client.get_transaction_block_id(hash).await,
@@ -575,10 +578,13 @@ where
         last_transaction_lt: Option<u64>,
     ) -> Result<Vec<Transaction>>;
 
-    async fn get_keyblock(&self) -> Result<ton_block::Block>;
+    async fn get_keyblock(&self) -> Result<Block>;
     async fn get_library_cell(&self, hash: &UInt256) -> Result<Option<Cell>>;
-    async fn get_transaction_block_id(&self, id: &UInt256) -> Result<Option<BlockId>>;
-    async fn get_key_block_proof(&self, seqno: u32) -> Result<Option<KeyBlockProof>>;
+    async fn get_transaction_block_id(&self, id: &UInt256)
+        -> Result<Option<ton_block::BlockIdExt>>;
+    async fn get_key_block_proof(&self, seqno: u32) -> Result<Option<BlockProof>>;
+    async fn get_block_proof(&self, block_id: ton_block::BlockIdExt) -> Result<Option<BlockProof>>;
+    async fn get_block_data(&self, block_id: ton_block::BlockIdExt) -> Result<Option<Block>>;
 }
 
 #[async_trait::async_trait]

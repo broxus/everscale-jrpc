@@ -33,21 +33,9 @@ pub struct JrpcGetTransactionBlockIdRequest {
     pub id: [u8; 32],
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct JrpcBlockIdResponse {
-    pub workchain: i32,
-    pub shard: String,
-    pub seqno: u32,
-    #[serde(with = "serde_hex_array")]
-    pub root_hash: [u8; 32],
-    #[serde(with = "serde_hex_array")]
-    pub file_hash: [u8; 32],
-}
-
 impl Request for JrpcGetTransactionBlockIdRequest {
     type ResponseContainer = Self::Response;
-    type Response = JrpcBlockIdResponse;
+    type Response = String;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,9 +46,21 @@ pub struct GetKeyBlockProofRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct JrpcKeyBlockProof {
-    pub proof: String,
-    pub signatures: Vec<JrpcBlockProofSignatures>,
+pub struct GetBlockDataRequest {
+    pub block_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JrpcBlockProof {
+    pub proof: String, //base64 bytes
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JrpcBlockData {
+    #[serde(with = "serde_ton_block")]
+    pub block: ton_block::Block, //base64 bytes
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,7 +73,7 @@ pub struct JrpcBlockProofSignatures {
 
 impl Request for GetKeyBlockProofRequest {
     type ResponseContainer = Self::Response;
-    type Response = JrpcKeyBlockProof;
+    type Response = String;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

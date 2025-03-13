@@ -198,6 +198,12 @@ pub async fn proto_router(
             rpc::request::Call::GetTransactionBlockId(_) => {
                 todo!()
             }
+            rpc::request::Call::GetBlockProof(_) => {
+                todo!()
+            }
+            rpc::request::Call::GetBlockData(_) => {
+                todo!()
+            }
             rpc::request::Call::GetContractState(param) => {
                 req.fill(ctx.proto().get_contract_state(param))
             }

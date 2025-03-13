@@ -1511,7 +1511,7 @@ dependencies = [
  "httpdate",
  "itoa",
  "pin-project-lite",
- "socket2 0.5.7",
+ "socket2 0.4.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -1784,7 +1784,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c2a198fb6b0eada2a8df47933734e6d35d350665a33a3593d7164fa52c75c19"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -2059,7 +2059,7 @@ dependencies = [
 [[package]]
 name = "nekoton"
 version = "0.13.1"
-source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Fl2-methods#4a1037cd635657c464f009615238e59b77e9dfbc"
+source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Fl2-methods#c2ffca251b372de2956c8acfd2ddf640ef0b22af"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2102,7 +2102,7 @@ dependencies = [
 [[package]]
 name = "nekoton-abi"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Fl2-methods#4a1037cd635657c464f009615238e59b77e9dfbc"
+source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Fl2-methods#c2ffca251b372de2956c8acfd2ddf640ef0b22af"
 dependencies = [
  "anyhow",
  "base64 0.13.1",
@@ -2129,7 +2129,7 @@ dependencies = [
 [[package]]
 name = "nekoton-contracts"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Fl2-methods#4a1037cd635657c464f009615238e59b77e9dfbc"
+source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Fl2-methods#c2ffca251b372de2956c8acfd2ddf640ef0b22af"
 dependencies = [
  "anyhow",
  "nekoton-abi",
@@ -2146,7 +2146,7 @@ dependencies = [
 [[package]]
 name = "nekoton-derive"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Fl2-methods#4a1037cd635657c464f009615238e59b77e9dfbc"
+source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Fl2-methods#c2ffca251b372de2956c8acfd2ddf640ef0b22af"
 dependencies = [
  "either",
  "proc-macro2",
@@ -2157,7 +2157,7 @@ dependencies = [
 [[package]]
 name = "nekoton-jetton"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Fl2-methods#4a1037cd635657c464f009615238e59b77e9dfbc"
+source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Fl2-methods#c2ffca251b372de2956c8acfd2ddf640ef0b22af"
 dependencies = [
  "anyhow",
  "lazy_static",
@@ -2174,7 +2174,7 @@ dependencies = [
 [[package]]
 name = "nekoton-proto"
 version = "0.1.0"
-source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Fl2-methods#4a1037cd635657c464f009615238e59b77e9dfbc"
+source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Fl2-methods#c2ffca251b372de2956c8acfd2ddf640ef0b22af"
 dependencies = [
  "anyhow",
  "nekoton-abi",
@@ -2186,7 +2186,7 @@ dependencies = [
 [[package]]
 name = "nekoton-utils"
 version = "0.13.0"
-source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Fl2-methods#4a1037cd635657c464f009615238e59b77e9dfbc"
+source = "git+https://github.com/broxus/nekoton.git?branch=feature%2Fl2-methods#c2ffca251b372de2956c8acfd2ddf640ef0b22af"
 dependencies = [
  "anyhow",
  "base64 0.13.1",
@@ -3619,7 +3619,7 @@ dependencies = [
 [[package]]
 name = "ton_block"
 version = "1.9.73"
-source = "git+https://github.com/broxus/ton-labs-block#5c4e4f84cebaf34254fd97523d1fc83d7fbe2d91"
+source = "git+https://github.com/broxus/ton-labs-block#eb87ac3abcf6b489d51e4da2e52f850594a1644f"
 dependencies = [
  "anyhow",
  "base64 0.13.1",
@@ -3641,7 +3641,7 @@ dependencies = [
 [[package]]
 name = "ton_executor"
 version = "1.15.54"
-source = "git+https://github.com/broxus/ton-labs-executor#2a38890d53f9c3dad84b3fb9a58e3bb62ba20f44"
+source = "git+https://github.com/broxus/ton-labs-executor#1c63aa953462822397a3b50f260e294653e9caed"
 dependencies = [
  "anyhow",
  "log",
@@ -3676,7 +3676,7 @@ dependencies = [
 [[package]]
 name = "ton_vm"
 version = "1.8.29"
-source = "git+https://github.com/broxus/ton-labs-vm.git#41a85bcde18bc524c18448ffc6aea35aa383c54a"
+source = "git+https://github.com/broxus/ton-labs-vm.git#bf49d876d0d81fd4ad2b184d3620721465fc10c5"
 dependencies = [
  "anyhow",
  "ed25519",

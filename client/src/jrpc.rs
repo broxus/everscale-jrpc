@@ -4,18 +4,19 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use nekoton::transport::models::ExistingContract;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use ton_block::{
-    Block, CommonMsgInfo, Deserializable, Message, MsgAddressInt, ShardIdent, Transaction,
+    Block, BlockIdExt, BlockProof, CommonMsgInfo, Deserializable, Message, MsgAddressInt,
+    ShardIdent, Transaction,
 };
-use ton_types::{deserialize_tree_of_cells, UInt256};
+use ton_types::UInt256;
 
 use crate::*;
-use everscale_rpc_models::jrpc::JrpcKeyBlockProof;
-use everscale_rpc_models::{jrpc, Signature, Timings};
+use everscale_rpc_models::jrpc::{JrpcBlockData, JrpcBlockProof};
+use everscale_rpc_models::{jrpc, Timings};
 
 pub type JrpcClient = JrpcClientImpl<JrpcConnection>;
 
@@ -106,7 +107,7 @@ where
         }
     }
 
-    async fn get_key_block_proof(&self, seqno: u32) -> Result<Option<KeyBlockProof>> {
+    async fn get_key_block_proof(&self, seqno: u32) -> Result<Option<BlockProof>> {
         let params = &jrpc::GetKeyBlockProofRequest { seqno };
         let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
             method: "getKeyBlockProof",
@@ -114,33 +115,54 @@ where
         });
 
         match self
-            .request::<_, Option<JrpcKeyBlockProof>>(&request)
+            .request::<_, Option<JrpcBlockProof>>(&request)
             .await?
             .into_inner()
         {
-            Some(s) => {
-                let bytes = base64::decode(s.proof)?;
-                let mut signatures = Vec::new();
-                for s in s.signatures {
-                    let mut sig = [0u8; 64];
-                    let sig_bytes = base64::decode(&s.signature)?;
-                    sig.copy_from_slice(sig_bytes.as_slice());
-
-                    signatures.push(Signature {
-                        node_id: UInt256::from_slice(s.node_id.as_slice()),
-                        signature: sig,
-                    })
-                }
-                Ok(Some(KeyBlockProof {
-                    proof: deserialize_tree_of_cells(&mut bytes.as_slice())?,
-                    signatures,
-                }))
-            }
+            Some(s) => Ok(Some(BlockProof::construct_from_base64(&s.proof)?)),
             None => Ok(None),
         }
     }
 
-    async fn get_transaction_block_id(&self, id: &UInt256) -> Result<Option<BlockId>> {
+    async fn get_block_proof(&self, block_id: BlockIdExt) -> Result<Option<BlockProof>> {
+        let params = &jrpc::GetBlockDataRequest {
+            block_id: block_id_to_string(block_id),
+        };
+        let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
+            method: "getBlockProof",
+            params,
+        });
+
+        match self
+            .request::<_, Option<JrpcBlockProof>>(&request)
+            .await?
+            .into_inner()
+        {
+            Some(s) => Ok(Some(BlockProof::construct_from_base64(&s.proof)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn get_block_data(&self, block_id: BlockIdExt) -> Result<Option<Block>> {
+        let params = &jrpc::GetBlockDataRequest {
+            block_id: block_id_to_string(block_id),
+        };
+        let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
+            method: "getBlockData",
+            params,
+        });
+
+        match self
+            .request::<_, Option<JrpcBlockData>>(&request)
+            .await?
+            .into_inner()
+        {
+            Some(s) => Ok(Some(s.block)),
+            None => Ok(None),
+        }
+    }
+
+    async fn get_transaction_block_id(&self, id: &UInt256) -> Result<Option<BlockIdExt>> {
         let params = &jrpc::JrpcGetTransactionBlockIdRequest { id: id.inner() };
         let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
             method: "getTransactionBlockId",
@@ -148,16 +170,11 @@ where
         });
 
         match self
-            .request::<_, Option<jrpc::JrpcBlockIdResponse>>(&request)
+            .request::<_, Option<String>>(&request)
             .await?
             .into_inner()
         {
-            Some(s) => Ok(Some(BlockId {
-                shard: ShardIdent::with_tagged_prefix(s.workchain, s.shard.trim().parse()?)?,
-                seqno: s.seqno,
-                root_hash: s.root_hash,
-                file_hash: s.file_hash,
-            })),
+            Some(s) => Ok(Some(block_id_from_string(&s)?)),
             None => Ok(None),
         }
     }
@@ -679,6 +696,53 @@ pub enum JsonRpcAnswer {
 pub struct JsonRpcError {
     pub code: i32,
     pub message: String,
+}
+
+fn block_id_to_string(block_id: BlockIdExt) -> String {
+    format!(
+        "{}:{}:{}:{}:{}",
+        block_id.shard_id.workchain_id(),
+        block_id.shard_id.shard_prefix_as_str_with_tag(),
+        block_id.seq_no,
+        block_id.root_hash.as_hex_string(),
+        block_id.file_hash.as_hex_string()
+    )
+}
+
+fn block_id_from_string(block_id_str: &str) -> Result<BlockIdExt> {
+    let mut parts = block_id_str.trim().split(':');
+
+    let workchain_id: i32 = parts
+        .next()
+        .ok_or_else(|| anyhow!("Can't read workchain_id from {}", block_id_str))?
+        .trim()
+        .parse()?;
+    let shard = u64::from_str_radix(
+        parts
+            .next()
+            .ok_or_else(|| anyhow!("Can't read shard from {}", block_id_str))?
+            .trim(),
+        16,
+    )?;
+    let seq_no: u32 = parts
+        .next()
+        .ok_or_else(|| anyhow!("Can't read seq_no from {}", block_id_str))?
+        .trim()
+        .parse()?;
+    let root_hash = parts
+        .next()
+        .ok_or_else(|| anyhow!("Can't read root_hash from {}", block_id_str))?
+        .parse()?;
+    let file_hash = parts
+        .next()
+        .ok_or_else(|| anyhow!("Can't read file_hash from {}", block_id_str))?
+        .parse()?;
+    Ok(BlockIdExt::with_params(
+        ShardIdent::with_tagged_prefix(workchain_id, shard)?,
+        seq_no,
+        root_hash,
+        file_hash,
+    ))
 }
 
 #[cfg(test)]
