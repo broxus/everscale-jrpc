@@ -56,7 +56,6 @@ pub struct GetKeyBlockProofRequest {
     pub seqno: u32,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JrpcKeyBlockProof {
