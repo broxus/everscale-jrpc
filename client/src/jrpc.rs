@@ -4,18 +4,18 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use nekoton::transport::models::ExistingContract;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use ton_block::{
-    Block, BlockIdExt, BlockProof, CommonMsgInfo, Deserializable, Message, MsgAddressInt,
+    Block, BlockIdExt, CommonMsgInfo, Deserializable, Message, MsgAddressInt,
     ShardIdent, Transaction,
 };
-use ton_types::UInt256;
+use ton_types::{deserialize_tree_of_cells, UInt256};
 
 use crate::*;
-use everscale_rpc_models::jrpc::{JrpcBlockData, JrpcBlockProof};
+use everscale_rpc_models::jrpc::{BlockIdResponse, JrpcBlockData, JrpcBlockProof};
 use everscale_rpc_models::{jrpc, Timings};
 
 pub type JrpcClient = JrpcClientImpl<JrpcConnection>;
@@ -100,14 +100,14 @@ where
                 cell: Some(base64_cell),
             } => {
                 let bytes = base64::decode(base64_cell)?;
-                let cell = ton_types::deserialize_tree_of_cells(&mut bytes.as_ref())?;
+                let cell = deserialize_tree_of_cells(&mut bytes.as_ref())?;
                 Ok(Some(cell))
             }
             jrpc::GetLibraryCellResponse { cell: None } => Ok(None),
         }
     }
 
-    async fn get_key_block_proof(&self, seqno: u32) -> Result<Option<BlockProof>> {
+    async fn get_key_block_proof(&self, seqno: u32) -> Result<Option<Cell>> {
         let params = &jrpc::GetKeyBlockProofRequest { seqno };
         let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
             method: "getKeyBlockProof",
@@ -119,12 +119,15 @@ where
             .await?
             .into_inner()
         {
-            Some(s) => Ok(Some(BlockProof::construct_from_base64(&s.proof)?)),
+            Some(s) => {
+                let bytes = base64::decode(s.proof)?;
+                Ok(Some(deserialize_tree_of_cells(&mut bytes.as_slice())?))
+            },
             None => Ok(None),
         }
     }
 
-    async fn get_block_proof(&self, block_id: BlockIdExt) -> Result<Option<BlockProof>> {
+    async fn get_block_proof(&self, block_id: &BlockIdExt) -> Result<Option<Cell>> {
         let params = &jrpc::GetBlockDataRequest {
             block_id: block_id_to_string(block_id),
         };
@@ -138,12 +141,15 @@ where
             .await?
             .into_inner()
         {
-            Some(s) => Ok(Some(BlockProof::construct_from_base64(&s.proof)?)),
+            Some(s) => {
+                let bytes = base64::decode(s.proof)?;
+                Ok(Some(deserialize_tree_of_cells(&mut bytes.as_slice())?))
+            },
             None => Ok(None),
         }
     }
 
-    async fn get_block_data(&self, block_id: BlockIdExt) -> Result<Option<Block>> {
+    async fn get_block_data(&self, block_id: &BlockIdExt) -> Result<Option<Cell>> {
         let params = &jrpc::GetBlockDataRequest {
             block_id: block_id_to_string(block_id),
         };
@@ -157,7 +163,10 @@ where
             .await?
             .into_inner()
         {
-            Some(s) => Ok(Some(s.block)),
+            Some(s) => {
+                let bytes = base64::decode(s.data)?;
+                Ok(Some(deserialize_tree_of_cells(&mut bytes.as_slice())?))
+            },
             None => Ok(None),
         }
     }
@@ -170,11 +179,19 @@ where
         });
 
         match self
-            .request::<_, Option<String>>(&request)
+            .request::<_, Option<BlockIdResponse>>(&request)
             .await?
             .into_inner()
         {
-            Some(s) => Ok(Some(block_id_from_string(&s)?)),
+            Some(s) => Ok(Some(BlockIdExt {
+                shard_id: ShardIdent::with_tagged_prefix(
+                    s.workchain,
+                    u64::from_str_radix(&s.shard, 16)?
+                )?,
+                seq_no: s.seqno,
+                root_hash: UInt256::from(s.root_hash),
+                file_hash: UInt256::from(s.file_hash),
+            })),
             None => Ok(None),
         }
     }
@@ -698,7 +715,7 @@ pub struct JsonRpcError {
     pub message: String,
 }
 
-fn block_id_to_string(block_id: BlockIdExt) -> String {
+fn block_id_to_string(block_id: &BlockIdExt) -> String {
     format!(
         "{}:{}:{}:{}:{}",
         block_id.shard_id.workchain_id(),
@@ -709,47 +726,11 @@ fn block_id_to_string(block_id: BlockIdExt) -> String {
     )
 }
 
-fn block_id_from_string(block_id_str: &str) -> Result<BlockIdExt> {
-    let mut parts = block_id_str.trim().split(':');
-
-    let workchain_id: i32 = parts
-        .next()
-        .ok_or_else(|| anyhow!("Can't read workchain_id from {}", block_id_str))?
-        .trim()
-        .parse()?;
-    let shard = u64::from_str_radix(
-        parts
-            .next()
-            .ok_or_else(|| anyhow!("Can't read shard from {}", block_id_str))?
-            .trim(),
-        16,
-    )?;
-    let seq_no: u32 = parts
-        .next()
-        .ok_or_else(|| anyhow!("Can't read seq_no from {}", block_id_str))?
-        .trim()
-        .parse()?;
-    let root_hash = parts
-        .next()
-        .ok_or_else(|| anyhow!("Can't read root_hash from {}", block_id_str))?
-        .parse()?;
-    let file_hash = parts
-        .next()
-        .ok_or_else(|| anyhow!("Can't read file_hash from {}", block_id_str))?
-        .parse()?;
-    Ok(BlockIdExt::with_params(
-        ShardIdent::with_tagged_prefix(workchain_id, shard)?,
-        seq_no,
-        root_hash,
-        file_hash,
-    ))
-}
-
 #[cfg(test)]
 mod test {
     use std::str::FromStr;
     use std::time::Duration;
-
+    use anyhow::anyhow;
     use super::*;
 
     #[tokio::test]
@@ -887,11 +868,64 @@ mod test {
         assert_eq!(tx.lt, 33247841000007);
     }
 
+    #[tokio::test]
+    async fn get_block_by_tx() {
+        let pr = get_client().await;
+        let proof_opt = pr.get_transaction_block_id(
+            &UInt256::from_str("064cee39c28f3dbac614db191ff3a8dd9c196e58cadd182b05a629a0075fa66e")
+                .unwrap()
+        ).await
+            .unwrap();
+        let Some(block) = proof_opt else {
+            panic!()
+        };
+
+
+        println!("{}", block_id_to_string(&block));
+    }
+
+    #[tokio::test]
+    async fn get_key_block_proof() {
+        let pr = get_client().await;
+        let proof_opt = pr.get_key_block_proof(1062437).await.unwrap();
+        let Some(proof) = proof_opt else {
+            panic!()
+        };
+
+        assert_eq!(format!("{}", proof.repr_hash().to_hex_string()), "fc96c2b3b05ed333f5bf3565969a8f0822743845d1601ea96277d465bd56d159" );
+    }
+
+    #[tokio::test]
+    async fn get_block_proof() {
+        let pr = get_client().await;
+
+        let block_id = block_id_from_string("0:8000000000000000:1735755:4290f54c4dd0f40efc25f796760f7817a5d4f904fd0625298a323b58e01e7239:a95a5e79a466976e4549bcd206aafa0922b5c6568ca061f6a57511380f1bbc89").unwrap();
+        let proof_opt = pr.get_block_proof(&block_id).await.unwrap();
+        let Some(cell) = proof_opt else {
+            panic!()
+        };
+
+        println!("{}", cell.repr_hash().to_hex_string());
+    }
+
+    #[tokio::test]
+    async fn get_block_data() {
+        let pr = get_client().await;
+
+        let block_id = block_id_from_string("0:8000000000000000:1735755:4290f54c4dd0f40efc25f796760f7817a5d4f904fd0625298a323b58e01e7239:a95a5e79a466976e4549bcd206aafa0922b5c6568ca061f6a57511380f1bbc89").unwrap();
+        let proof_opt = pr.get_block_data(&block_id).await.unwrap();
+        let Some(cell) = proof_opt else {
+            panic!()
+        };
+
+        println!("{:?}", cell);
+    }
+
     async fn get_client() -> JrpcClient {
         JrpcClient::new(
             [
                 "https://jrpc.everwallet.net/rpc".parse().unwrap(),
-                "http://127.0.0.1:8081".parse().unwrap(),
+                "http://0.0.0.0:8001".parse().unwrap(),
             ],
             ClientOptions {
                 probe_interval: Duration::from_secs(10),
@@ -926,5 +960,41 @@ mod test {
             }
             _ => panic!("expected error"),
         }
+    }
+
+    fn block_id_from_string(block_id_str: &str) -> Result<BlockIdExt> {
+        let mut parts = block_id_str.trim().split(':');
+
+        let workchain_id: i32 = parts
+            .next()
+            .ok_or_else(|| anyhow!("Can't read workchain_id from {}", block_id_str))?
+            .trim()
+            .parse()?;
+        let shard = u64::from_str_radix(
+            parts
+                .next()
+                .ok_or_else(|| anyhow!("Can't read shard from {}", block_id_str))?
+                .trim(),
+            16,
+        )?;
+        let seq_no: u32 = parts
+            .next()
+            .ok_or_else(|| anyhow!("Can't read seq_no from {}", block_id_str))?
+            .trim()
+            .parse()?;
+        let root_hash = parts
+            .next()
+            .ok_or_else(|| anyhow!("Can't read root_hash from {}", block_id_str))?
+            .parse()?;
+        let file_hash = parts
+            .next()
+            .ok_or_else(|| anyhow!("Can't read file_hash from {}", block_id_str))?
+            .parse()?;
+        Ok(BlockIdExt::with_params(
+            ShardIdent::with_tagged_prefix(workchain_id, shard)?,
+            seq_no,
+            root_hash,
+            file_hash,
+        ))
     }
 }

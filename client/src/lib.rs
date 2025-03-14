@@ -22,7 +22,7 @@ use parking_lot::RwLock;
 use reqwest::header::CONTENT_TYPE;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use ton_block::{Block, BlockProof, GetRepresentationHash, MsgAddressInt, Transaction};
+use ton_block::{Block, BlockIdExt, GetRepresentationHash, MsgAddressInt, Transaction};
 use ton_types::{Cell, UInt256};
 
 pub mod jrpc;
@@ -140,7 +140,7 @@ impl RpcClient {
         }
     }
 
-    pub async fn get_key_block_proof(&self, id: u32) -> Result<Option<BlockProof>> {
+    pub async fn get_key_block_proof(&self, id: u32) -> Result<Option<Cell>> {
         match self {
             RpcClient::Jrpc(client) => client.get_key_block_proof(id).await,
             RpcClient::Proto(client) => client.get_key_block_proof(id).await,
@@ -154,6 +154,26 @@ impl RpcClient {
         match self {
             RpcClient::Jrpc(client) => client.get_transaction_block_id(hash).await,
             RpcClient::Proto(client) => client.get_transaction_block_id(hash).await,
+        }
+    }
+
+    pub async fn get_block_proof(
+        &self,
+        block_id: &BlockIdExt,
+    ) -> Result<Option<Cell>> {
+        match self {
+            RpcClient::Jrpc(client) => client.get_block_proof(block_id).await,
+            RpcClient::Proto(client) => client.get_block_proof(block_id).await,
+        }
+    }
+
+    pub async fn get_block_data(
+        &self,
+        block_id: &BlockIdExt,
+    ) -> Result<Option<Cell>> {
+        match self {
+            RpcClient::Jrpc(client) => client.get_block_data(block_id).await,
+            RpcClient::Proto(client) => client.get_block_data(block_id).await,
         }
     }
 
@@ -582,9 +602,9 @@ where
     async fn get_library_cell(&self, hash: &UInt256) -> Result<Option<Cell>>;
     async fn get_transaction_block_id(&self, id: &UInt256)
         -> Result<Option<ton_block::BlockIdExt>>;
-    async fn get_key_block_proof(&self, seqno: u32) -> Result<Option<BlockProof>>;
-    async fn get_block_proof(&self, block_id: ton_block::BlockIdExt) -> Result<Option<BlockProof>>;
-    async fn get_block_data(&self, block_id: ton_block::BlockIdExt) -> Result<Option<Block>>;
+    async fn get_key_block_proof(&self, seqno: u32) -> Result<Option<Cell>>;
+    async fn get_block_proof(&self, block_id: &BlockIdExt) -> Result<Option<Cell>>;
+    async fn get_block_data(&self, block_id: &BlockIdExt) -> Result<Option<Cell>>;
 }
 
 #[async_trait::async_trait]

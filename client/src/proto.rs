@@ -12,7 +12,7 @@ use ton_block::{
     BlockIdExt, CommonMsgInfo, ConfigParams, Deserializable, MsgAddressInt, Serializable,
     ShardIdent, Transaction,
 };
-use ton_types::UInt256;
+use ton_types::{deserialize_tree_of_cells, UInt256};
 
 use everscale_rpc_models::proto::ProtoAnswer;
 use everscale_rpc_models::Timings;
@@ -125,7 +125,7 @@ where
         Ok(result)
     }
 
-    async fn get_key_block_proof(&self, seqno: u32) -> Result<Option<BlockProof>> {
+    async fn get_key_block_proof(&self, seqno: u32) -> Result<Option<Cell>> {
         let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
             call: Some(rpc::request::Call::GetKeyBlockProof(
                 rpc::request::GetKeyBlockProof { seqno },
@@ -141,7 +141,7 @@ where
 
         let result = match result {
             rpc::response::Result::GetKeyBlockProof(response) => match response.proof {
-                Some(proof) => Some(BlockProof::construct_from_bytes(proof.as_ref())?),
+                Some(proof) => Some(deserialize_tree_of_cells(&mut proof.as_ref())?),
                 None => None,
             },
             _ => None,
@@ -181,7 +181,7 @@ where
         Ok(result)
     }
 
-    async fn get_block_proof(&self, block_id: BlockIdExt) -> Result<Option<BlockProof>> {
+    async fn get_block_proof(&self, block_id: &BlockIdExt) -> Result<Option<Cell>> {
         let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
             call: Some(rpc::request::Call::GetBlockProof(
                 rpc::request::GetBlockData {
@@ -203,7 +203,7 @@ where
 
         let result = match result {
             rpc::response::Result::GetBlockProof(response) => match response.proof {
-                Some(proof) => Some(BlockProof::construct_from_bytes(proof.as_ref())?),
+                Some(proof) => Some(deserialize_tree_of_cells(&mut proof.as_ref())?),
                 None => None,
             },
             _ => None,
@@ -212,7 +212,7 @@ where
         Ok(result)
     }
 
-    async fn get_block_data(&self, block_id: BlockIdExt) -> Result<Option<Block>> {
+    async fn get_block_data(&self, block_id: &BlockIdExt) -> Result<Option<Cell>> {
         let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
             call: Some(rpc::request::Call::GetBlockData(
                 rpc::request::GetBlockData {
@@ -234,7 +234,7 @@ where
 
         let result = match result {
             rpc::response::Result::GetBlockProof(response) => match response.proof {
-                Some(proof) => Some(Block::construct_from_bytes(proof.as_ref())?),
+                Some(proof) => Some(deserialize_tree_of_cells(&mut proof.as_ref())?),
                 None => None,
             },
             _ => None,

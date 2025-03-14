@@ -59,8 +59,19 @@ pub struct JrpcBlockProof {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JrpcBlockData {
-    #[serde(with = "serde_ton_block")]
-    pub block: ton_block::Block, //base64 bytes
+    pub data: String, //base64 bytes
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlockIdResponse {
+    pub workchain: i32,
+    pub shard: String,
+    pub seqno: u32,
+    #[serde(with = "serde_hex_array")]
+    pub root_hash: [u8;32],
+    #[serde(with = "serde_hex_array")]
+    pub file_hash: [u8;32],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
