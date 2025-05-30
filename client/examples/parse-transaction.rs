@@ -52,6 +52,6 @@ async fn get_abi_for_account(contract_addr: &str) -> Result<ton_abi::Contract> {
     .text()
     .await?;
 
-    let abi = ton_abi::Contract::load(&abi)?;
+    let abi = ton_abi::Contract::load(abi.as_bytes())?;
     Ok(abi)
 }

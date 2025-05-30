@@ -5,7 +5,7 @@ use ed25519_dalek::Signer;
 use nekoton::core::models::Expiration;
 use nekoton::core::ton_wallet::multisig::prepare_transfer;
 use nekoton::core::ton_wallet::{Gift, MultisigType, TransferAction, WalletType};
-use nekoton::crypto::MnemonicType;
+use nekoton::crypto::{Bip39MnemonicData, MnemonicType};
 use ton_block::{GetRepresentationHash, MsgAddressInt};
 
 use everscale_rpc_client::{ClientOptions, SendOptions, SendStatus, TransportErrorAction};
@@ -29,7 +29,7 @@ async fn main() {
     .unwrap();
 
     let signer =
-        nekoton::crypto::derive_from_phrase(&seed, MnemonicType::Labs(0)).expect("invalid seed");
+        nekoton::crypto::derive_from_phrase(&seed, MnemonicType::Bip39(Bip39MnemonicData::labs_old(0))).expect("invalid seed");
     let from = nekoton::core::ton_wallet::compute_address(
         &signer.public,
         WalletType::Multisig(MultisigType::SafeMultisigWallet),
