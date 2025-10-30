@@ -409,7 +409,7 @@ where
 
         function
             .clone()
-            .run_local(&SimpleClock, state.account, input)
+            .run_local(&SimpleClock, state.account, input, Default::default())
             .map(Some)
     }
 
@@ -550,7 +550,7 @@ where
 
         let result = function
             .clone()
-            .run_local(&SimpleClock, state.account, input)
+            .run_local(&SimpleClock, state.account, input, Default::default())
             .map(Some)?;
         Ok(result)
     }
