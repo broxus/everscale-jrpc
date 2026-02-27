@@ -360,10 +360,6 @@ impl<T: Connection + Ord + Clone + 'static> ProtoClientImpl<T> {
     }
 
     pub async fn get_raw_transaction(&self, tx_hash: UInt256) -> Result<Option<Transaction>> {
-        if !self.is_capable_of_message_tracking {
-            anyhow::bail!("This method is not supported by light nodes")
-        }
-
         let request: RpcRequest<()> = RpcRequest::PROTO(rpc::Request {
             call: Some(rpc::request::Call::GetTransaction(
                 rpc::request::GetTransaction {
@@ -791,6 +787,28 @@ mod test {
             .unwrap()
             .unwrap();
         assert_eq!(tx.lt, 33247841000007);
+    }
+
+    #[tokio::test]
+    async fn get_raw_transaction_does_not_use_dst_tracking_capability_gate() {
+        let pr = ProtoClientImpl {
+            state: Arc::new(State {
+                endpoints: Vec::<ProtoConnection>::new(),
+                live_endpoints: Default::default(),
+                options: ClientOptions::default(),
+            }),
+            is_capable_of_message_tracking: false,
+        };
+
+        let tx_hash = UInt256::default();
+        let err = pr.get_raw_transaction(tx_hash).await.unwrap_err();
+        let err = err.to_string();
+
+        assert!(
+            !err.contains("This method is not supported by light nodes"),
+            "getTransaction must not be blocked by getDstTransaction capability flag"
+        );
+        assert!(err.contains("No endpoints available"));
     }
 
     async fn get_client() -> ProtoClient {

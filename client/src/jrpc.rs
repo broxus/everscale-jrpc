@@ -17,6 +17,33 @@ use crate::*;
 
 pub type JrpcClient = JrpcClientImpl<JrpcConnection>;
 
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LtEncoding {
+    Number = 0,
+    String = 1,
+}
+
+impl LtEncoding {
+    fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::String,
+            _ => Self::Number,
+        }
+    }
+}
+
+pub trait JrpcAdaptiveConnection: Connection {
+    fn adjust_jrpc_params(&self, method: &str, params: &mut serde_json::Value);
+
+    fn update_jrpc_mode_from_error(
+        &self,
+        method: &str,
+        error_code: i32,
+        error_message: &str,
+    ) -> bool;
+}
+
 #[derive(Clone)]
 pub struct JrpcClientImpl<T: Connection + Ord + Clone> {
     state: Arc<State<T>>,
@@ -26,7 +53,7 @@ pub struct JrpcClientImpl<T: Connection + Ord + Clone> {
 #[async_trait::async_trait]
 impl<T> Client<T> for JrpcClientImpl<T>
 where
-    T: Connection + Ord + Clone + 'static,
+    T: JrpcAdaptiveConnection + Ord + Clone + 'static,
 {
     fn construct_from_state(state: Arc<State<T>>, is_capable_of_message_tracking: bool) -> Self {
         Self {
@@ -221,7 +248,24 @@ where
     }
 }
 
-impl<T: Connection + Ord + Clone + 'static> JrpcClientImpl<T> {
+impl<T: JrpcAdaptiveConnection + Ord + Clone + 'static> JrpcClientImpl<T> {
+    async fn send_jrpc_request<S: Serialize + Send + Sync>(
+        client: &T,
+        request: &JrpcRequest<'_, S>,
+    ) -> Result<JsonRpcResponse, RunError> {
+        let mut params = serde_json::to_value(request.params)?;
+        client.adjust_jrpc_params(request.method, &mut params);
+
+        let adapted_request = RpcRequest::JRPC(JrpcRequest {
+            method: request.method,
+            params: &params,
+        });
+
+        let response = client.request(&adapted_request).await?;
+
+        Ok(response.json::<JsonRpcResponse>().await?)
+    }
+
     pub async fn get_latest_key_block(&self) -> Result<jrpc::GetLatestKeyBlockResponse, RunError> {
         let request: RpcRequest<_> = RpcRequest::JRPC(JrpcRequest {
             method: "getLatestKeyBlock",
@@ -267,10 +311,6 @@ impl<T: Connection + Ord + Clone + 'static> JrpcClientImpl<T> {
     }
 
     pub async fn get_raw_transaction(&self, tx_hash: UInt256) -> Result<Option<Transaction>> {
-        if !self.is_capable_of_message_tracking {
-            anyhow::bail!("This method is not supported by light nodes")
-        }
-
         let params = &jrpc::GetTransactionRequestRef {
             id: tx_hash.as_slice(),
         };
@@ -309,29 +349,37 @@ impl<T: Connection + Ord + Clone + 'static> JrpcClientImpl<T> {
         S: Serialize + Send + Sync + Clone,
         for<'de> D: Deserialize<'de>,
     {
+        let request = match request {
+            RpcRequest::JRPC(request) => request,
+            RpcRequest::PROTO(_) => {
+                return Err(RunError::Generic(anyhow::anyhow!(
+                    "Invalid PROTO request for JRPC client"
+                )))
+            }
+        };
+
         const NUM_RETRIES: usize = 10;
+        let mut force_same_endpoint_once = None;
 
         for tries in 0..=NUM_RETRIES {
-            let client = self
-                .state
-                .get_client()
-                .await
-                .ok_or::<RunError>(ClientError::NoEndpointsAvailable.into())?;
-
-            let res = match client.request(request).await {
-                Ok(res) => res.json::<JsonRpcResponse>().await,
-                Err(e) => Err(e),
+            let client = match force_same_endpoint_once.take() {
+                Some(client) => client,
+                None => self
+                    .state
+                    .get_client()
+                    .await
+                    .ok_or::<RunError>(ClientError::NoEndpointsAvailable.into())?,
             };
+
+            let res = Self::send_jrpc_request(&client, request).await;
 
             let response = match res {
                 Ok(a) => a,
                 Err(e) => {
-                    if let RpcRequest::JRPC(req) = request {
-                        tracing::error!(
-                            req.method,
-                            "Error while sending JRPC request to endpoint: {e:?}"
-                        );
-                    }
+                    tracing::error!(
+                        request.method,
+                        "Error while sending JRPC request to endpoint: {e:?}"
+                    );
 
                     self.state.remove_endpoint(client.endpoint());
 
@@ -355,6 +403,11 @@ impl<T: Connection + Ord + Clone + 'static> JrpcClientImpl<T> {
                     })
                 }
                 JsonRpcAnswer::Error(e) => {
+                    if client.update_jrpc_mode_from_error(request.method, e.code, &e.message) {
+                        force_same_endpoint_once = Some(client.clone());
+                        continue;
+                    }
+
                     if tries == NUM_RETRIES {
                         return Err(ClientError::ErrorResponse(e.code, e.message).into());
                     }
@@ -381,6 +434,7 @@ pub struct JrpcConnection {
     was_dead: Arc<AtomicBool>,
     stats: Arc<Mutex<Option<Timings>>>,
     params: Arc<ReliabilityParams>,
+    lt_encoding: Arc<std::sync::atomic::AtomicU8>,
 }
 
 impl PartialEq<Self> for JrpcConnection {
@@ -434,6 +488,7 @@ impl Connection for JrpcConnection {
             was_dead: Arc::new(AtomicBool::new(false)),
             stats: Arc::new(Default::default()),
             params: Arc::new(reliability_params),
+            lt_encoding: Arc::new(std::sync::atomic::AtomicU8::new(LtEncoding::Number as u8)),
         }
     }
 
@@ -568,6 +623,101 @@ impl Connection for JrpcConnection {
         };
 
         Ok(res)
+    }
+
+}
+
+fn method_uses_last_transaction_lt(method: &str) -> bool {
+    matches!(method, "getContractState" | "getTransactionsList")
+}
+
+impl JrpcConnection {
+    fn lt_encoding(&self) -> LtEncoding {
+        LtEncoding::from_u8(self.lt_encoding.load(Ordering::Acquire))
+    }
+
+    fn set_lt_encoding(&self, value: LtEncoding) {
+        self.lt_encoding.store(value as u8, Ordering::Release);
+    }
+}
+
+impl JrpcAdaptiveConnection for JrpcConnection {
+    fn adjust_jrpc_params(&self, method: &str, params: &mut serde_json::Value) {
+        let Some(params) = params.as_object_mut() else {
+            return;
+        };
+
+        if !method_uses_last_transaction_lt(method) {
+            return;
+        }
+
+        let Some(value) = params.get_mut("lastTransactionLt") else {
+            return;
+        };
+
+        match self.lt_encoding() {
+            LtEncoding::Number => {
+                if let serde_json::Value::String(value_as_string) = value {
+                    if let Ok(value_as_number) = value_as_string.parse::<u64>() {
+                        *value = serde_json::Value::Number(value_as_number.into());
+                    }
+                }
+            }
+            LtEncoding::String => {
+                if let serde_json::Value::Number(value_as_number) = value {
+                    if let Some(value_as_u64) = value_as_number.as_u64() {
+                        *value = serde_json::Value::String(format!("{value_as_u64}"));
+                    }
+                }
+            }
+        }
+    }
+
+    fn update_jrpc_mode_from_error(
+        &self,
+        method: &str,
+        error_code: i32,
+        error_message: &str,
+    ) -> bool {
+        if !method_uses_last_transaction_lt(method) || error_code != -32602 {
+            return false;
+        }
+
+        let message = error_message.to_ascii_lowercase();
+        let next_mode = if message.contains("expected a string")
+            && (message.contains("invalid type: integer")
+                || message.contains("invalid type: number"))
+        {
+            Some(LtEncoding::String)
+        } else if message.contains("invalid type: string")
+            && (message.contains("expected integer")
+                || message.contains("expected an integer")
+                || message.contains("expected u64"))
+        {
+            Some(LtEncoding::Number)
+        } else {
+            None
+        };
+
+        let Some(next_mode) = next_mode else {
+            return false;
+        };
+
+        let old_mode = self.lt_encoding();
+        if old_mode == next_mode {
+            return false;
+        }
+
+        self.set_lt_encoding(next_mode);
+        tracing::warn!(
+            endpoint = self.endpoint(),
+            method,
+            old_mode = ?old_mode,
+            next_mode = ?next_mode,
+            "Switched LT encoding mode for endpoint"
+        );
+
+        true
     }
 }
 
@@ -765,6 +915,28 @@ mod test {
         assert_eq!(tx.lt, 33247841000007);
     }
 
+    #[tokio::test]
+    async fn get_raw_transaction_does_not_use_dst_tracking_capability_gate() {
+        let pr = JrpcClientImpl {
+            state: Arc::new(State {
+                endpoints: Vec::<JrpcConnection>::new(),
+                live_endpoints: Default::default(),
+                options: ClientOptions::default(),
+            }),
+            is_capable_of_message_tracking: false,
+        };
+
+        let tx_hash = UInt256::default();
+        let err = pr.get_raw_transaction(tx_hash).await.unwrap_err();
+        let err = err.to_string();
+
+        assert!(
+            !err.contains("This method is not supported by light nodes"),
+            "getTransaction must not be blocked by getDstTransaction capability flag"
+        );
+        assert!(err.contains("No endpoints available"));
+    }
+
     async fn get_client() -> JrpcClient {
         JrpcClient::new(
             [
@@ -804,5 +976,70 @@ mod test {
             }
             _ => panic!("expected error"),
         }
+    }
+
+    #[test]
+    fn switches_mode_to_string_on_invalid_integer_type_error() {
+        let endpoint = JrpcConnection::new(
+            "https://example.invalid/rpc".to_string(),
+            reqwest::Client::new(),
+            ReliabilityParams {
+                mc_acceptable_time_diff_sec: 1,
+                sc_acceptable_time_diff_sec: 1,
+            },
+        );
+
+        assert_eq!(endpoint.lt_encoding(), LtEncoding::Number);
+        assert!(endpoint.update_jrpc_mode_from_error(
+            "getContractState",
+            -32602,
+            "invalid type: integer `1612956000026`, expected a string at line 1 column 114",
+        ));
+        assert_eq!(endpoint.lt_encoding(), LtEncoding::String);
+    }
+
+    #[test]
+    fn switches_mode_to_number_on_invalid_string_type_error() {
+        let endpoint = JrpcConnection::new(
+            "https://example.invalid/rpc".to_string(),
+            reqwest::Client::new(),
+            ReliabilityParams {
+                mc_acceptable_time_diff_sec: 1,
+                sc_acceptable_time_diff_sec: 1,
+            },
+        );
+
+        endpoint.set_lt_encoding(LtEncoding::String);
+        assert!(endpoint.update_jrpc_mode_from_error(
+            "getTransactionsList",
+            -32602,
+            "invalid type: string \"1612956000026\", expected integer at line 1 column 114",
+        ));
+        assert_eq!(endpoint.lt_encoding(), LtEncoding::Number);
+    }
+
+    #[test]
+    fn rewrites_last_transaction_lt_according_to_mode() {
+        let endpoint = JrpcConnection::new(
+            "https://example.invalid/rpc".to_string(),
+            reqwest::Client::new(),
+            ReliabilityParams {
+                mc_acceptable_time_diff_sec: 1,
+                sc_acceptable_time_diff_sec: 1,
+            },
+        );
+
+        let mut params = serde_json::json!({
+            "address": "-1:3333333333333333333333333333333333333333333333333333333333333333",
+            "lastTransactionLt": 1612956000026u64
+        });
+
+        endpoint.set_lt_encoding(LtEncoding::String);
+        endpoint.adjust_jrpc_params("getContractState", &mut params);
+        assert_eq!(params["lastTransactionLt"], serde_json::json!("1612956000026"));
+
+        endpoint.set_lt_encoding(LtEncoding::Number);
+        endpoint.adjust_jrpc_params("getContractState", &mut params);
+        assert_eq!(params["lastTransactionLt"], serde_json::json!(1612956000026u64));
     }
 }
