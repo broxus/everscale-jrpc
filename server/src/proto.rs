@@ -206,7 +206,7 @@ pub async fn proto_router(
             rpc::request::Call::GetDstTransaction(p) => {
                 req.fill(ctx.proto().get_dst_transaction(p))
             }
-            _ => todo!()
+            _ => todo!(),
         },
         None => req.not_found(),
     }
