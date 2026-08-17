@@ -15,8 +15,8 @@ use ton_types::UInt256;
 
 use everscale_rpc_models::proto::ProtoAnswer;
 use everscale_rpc_models::Timings;
+use nekoton_proto::prost::bytes;
 use nekoton_proto::prost::bytes::Bytes;
-use nekoton_proto::prost::{bytes, Message};
 use nekoton_proto::protos::rpc;
 use nekoton_proto::utils;
 
@@ -626,12 +626,8 @@ impl Connection for ProtoConnection {
             _ => return Ok(false),
         };
 
-        let req = self
-            .client
-            .post(self.endpoint.as_str())
-            .body(body.encode_to_vec());
-
-        let response = req.send().await?;
+        let request: RpcRequest<()> = RpcRequest::PROTO(body);
+        let response = self.request(&request).await?;
         let result = parse_response(response).await?;
 
         let res = match result {

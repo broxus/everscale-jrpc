@@ -603,12 +603,12 @@ impl Connection for JrpcConnection {
     }
 
     async fn method_is_supported(&self, method: &str) -> Result<bool> {
-        let req = self.client.post(self.endpoint.as_str()).json(&JrpcRequest {
+        let request = RpcRequest::JRPC(JrpcRequest {
             method,
             params: &(),
         });
 
-        let JsonRpcResponse { result } = req.send().await?.json().await?;
+        let JsonRpcResponse { result } = self.request(&request).await?.json().await?;
         let res = match result {
             JsonRpcAnswer::Result(_) => true,
             JsonRpcAnswer::Error(e) => {
@@ -624,7 +624,6 @@ impl Connection for JrpcConnection {
 
         Ok(res)
     }
-
 }
 
 fn method_uses_last_transaction_lt(method: &str) -> bool {
@@ -1036,10 +1035,16 @@ mod test {
 
         endpoint.set_lt_encoding(LtEncoding::String);
         endpoint.adjust_jrpc_params("getContractState", &mut params);
-        assert_eq!(params["lastTransactionLt"], serde_json::json!("1612956000026"));
+        assert_eq!(
+            params["lastTransactionLt"],
+            serde_json::json!("1612956000026")
+        );
 
         endpoint.set_lt_encoding(LtEncoding::Number);
         endpoint.adjust_jrpc_params("getContractState", &mut params);
-        assert_eq!(params["lastTransactionLt"], serde_json::json!(1612956000026u64));
+        assert_eq!(
+            params["lastTransactionLt"],
+            serde_json::json!(1612956000026u64)
+        );
     }
 }
