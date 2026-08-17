@@ -253,8 +253,13 @@ impl<T: JrpcAdaptiveConnection + Ord + Clone + 'static> JrpcClientImpl<T> {
         client: &T,
         request: &JrpcRequest<'_, S>,
     ) -> Result<JsonRpcResponse, RunError> {
+        #[cfg(not(feature = "simd"))]
         let mut params = serde_json::to_value(request.params)?;
+        #[cfg(not(feature = "simd"))]
         client.adjust_jrpc_params(request.method, &mut params);
+
+        #[cfg(feature = "simd")]
+        let params = simd_json::serde::to_owned_value(request.params)?;
 
         let adapted_request = RpcRequest::JRPC(JrpcRequest {
             method: request.method,

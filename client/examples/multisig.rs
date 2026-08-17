@@ -28,8 +28,11 @@ async fn main() {
     .await
     .unwrap();
 
-    let signer =
-        nekoton::crypto::derive_from_phrase(&seed, MnemonicType::Bip39(Bip39MnemonicData::labs_old(0))).expect("invalid seed");
+    let signer = nekoton::crypto::derive_from_phrase(
+        &seed,
+        MnemonicType::Bip39(Bip39MnemonicData::labs_old(0)),
+    )
+    .expect("invalid seed");
     let from = nekoton::core::ton_wallet::compute_address(
         &signer.public,
         WalletType::Multisig(MultisigType::SafeMultisigWallet),
