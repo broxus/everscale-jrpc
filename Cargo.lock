@@ -275,7 +275,7 @@ dependencies = [
  "bitflags 2.5.0",
  "cexpr",
  "clang-sys",
- "itertools 0.11.0",
+ "itertools 0.10.5",
  "lazy_static",
  "lazycell",
  "proc-macro2",
@@ -1286,7 +1286,7 @@ checksum = "d2fabcfbdc87f4758337ca535fb41a6d701b65693ce38287d856d1674551ec9b"
 [[package]]
 name = "global-config"
 version = "0.1.0"
-source = "git+https://github.com/broxus/ton-indexer.git#0124a65a6e31f0206408a2294c007df3ba8f912d"
+source = "git+https://github.com/broxus/ton-indexer.git#2def070ef1fb167372422fe8c9cffec529be0d2a"
 dependencies = [
  "anyhow",
  "base64 0.13.1",
@@ -3565,7 +3565,7 @@ dependencies = [
 [[package]]
 name = "ton-indexer"
 version = "0.4.1"
-source = "git+https://github.com/broxus/ton-indexer.git#0124a65a6e31f0206408a2294c007df3ba8f912d"
+source = "git+https://github.com/broxus/ton-indexer.git#2def070ef1fb167372422fe8c9cffec529be0d2a"
 dependencies = [
  "ahash",
  "anyhow",
@@ -3634,7 +3634,7 @@ dependencies = [
 [[package]]
 name = "ton_block"
 version = "1.9.73"
-source = "git+https://github.com/broxus/ton-labs-block#f1c3e222ee6a2b2ccf663f4f2df5e1335b95961a"
+source = "git+https://github.com/broxus/ton-labs-block#a4fd60ccd6c48e00863dfcf402cb1c045d92a1a3"
 dependencies = [
  "anyhow",
  "base64 0.13.1",
